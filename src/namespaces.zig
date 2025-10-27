@@ -12,6 +12,7 @@ pub const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
 pub const XLINK_NAMESPACE = "http://www.w3.org/1999/xlink";
 pub const XML_NAMESPACE = "http://www.w3.org/XML/1998/namespace";
 pub const XMLNS_NAMESPACE = "http://www.w3.org/2000/xmlns/";
+pub const VML_NAMESPACE = "http://example.org";
 
 test "HTML namespace constant" {
     try std.testing.expectEqualStrings("http://www.w3.org/1999/xhtml", HTML_NAMESPACE);
@@ -35,4 +36,8 @@ test "XML namespace constant" {
 
 test "XMLNS namespace constant" {
     try std.testing.expectEqualStrings("http://www.w3.org/2000/xmlns/", XMLNS_NAMESPACE);
+}
+
+test "VML namespace constant" {
+    try std.testing.expectEqualStrings("http://example.org", VML_NAMESPACE);
 }

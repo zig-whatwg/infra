@@ -197,8 +197,8 @@ defer allocator.free(decoded);
 const html_ns = infra.namespaces.HTML_NAMESPACE;
 const svg_ns = infra.namespaces.SVG_NAMESPACE;
 const mathml_ns = infra.namespaces.MATHML_NAMESPACE;
+const vml_ns = infra.namespaces.VML_NAMESPACE;
 ```
-
 
 
 ## Installation
