@@ -51,6 +51,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### Namespaces (§8)
 - Namespace URI constants: `HTML_NAMESPACE`, `MATHML_NAMESPACE`, `SVG_NAMESPACE`, `XLINK_NAMESPACE`, `XML_NAMESPACE`, `XMLNS_NAMESPACE`
 
+#### Benchmarks
+- Memory leak benchmark (`bench-memory-leak`) - 2+ minute stress test verifying long-term memory stability
+
 ### Changed
 - Optimized Base64 decode to use two-pass whitespace stripping
 - Added ASCII fast path for `utf8ToUtf16()` conversion

@@ -27,6 +27,9 @@ zig build bench-json
 
 # Base64 operations
 zig build bench-base64
+
+# Memory leak detection (2+ minute runtime)
+zig build bench-memory-leak
 ```
 
 ## Benchmark Suites
@@ -124,6 +127,39 @@ Tests forgiving Base64 encoding/decoding (strips ASCII whitespace):
 - **roundtrip (large)** - Encode + decode 256 bytes
 
 **Key Metrics**: Encoding and decoding should scale linearly. Forgiving decode should handle whitespace with minimal overhead.
+
+### Memory Leak Detection (`memory_leak_bench.zig`)
+
+Tests long-term memory stability by running intensive workloads for 2+ minutes:
+
+**Phases:**
+1. **Warmup (5 seconds)** - Stabilize memory allocator state
+2. **Intensive Workload (120 seconds)** - Continuous create/destroy cycles
+3. **Cleanup Wait (5 seconds)** - Allow memory to return to baseline
+
+**Workloads (each iteration):**
+- **List operations** - 100 appends, removes, prepends, clone, sort
+- **OrderedMap operations** - 50 sets, 25 removes, clone with string keys
+- **OrderedSet operations** - 100 appends, 50 removes, clone
+- **Stack operations** - 100 pushes, 100 pops
+- **Queue operations** - 100 enqueues, 100 dequeues
+- **String operations** - UTF-8↔UTF-16 conversion, case transforms, splitting
+- **JSON operations** - Parse/serialize complex nested structures
+- **Base64 operations** - Encode/decode with forgiving whitespace handling
+
+**Success Criteria:**
+- ✅ **Pass**: Final memory ≤ baseline + 1% (within allocator variance)
+- ⚠️ **Warning**: Final memory > baseline + 1% but < 5% (possible slow leak)
+- ❌ **Fail**: Final memory > baseline + 5% (likely memory leak)
+
+**Metrics Reported:**
+- Total iterations completed
+- Iterations per second
+- Memory usage every 10 seconds during workload
+- Baseline, peak, and final memory comparison
+- Memory leak detection (GPA deinit check)
+
+**Key Metrics**: Memory should return to baseline (±1%) after intensive workload, indicating proper cleanup with `defer` patterns.
 
 ## Interpreting Results
 
