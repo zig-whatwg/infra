@@ -2,648 +2,571 @@
 
 ## Purpose
 
-This skill documents browser engine implementation research and how those findings apply to Zig WHATWG Infra implementation decisions, particularly for inline storage optimization in collections.
+This skill provides guidance on how to benchmark the WHATWG URL implementation against browser engines, identify optimization opportunities, and measure URL parsing performance.
 
 ---
 
-## Browser Engine Research
+## Why Benchmark Against Browsers?
 
-### Chromium (Blink)
+**URL parsing must match browser behavior** - both functionally AND performantly.
 
-**Vector Implementation** (`third_party/blink/renderer/platform/wtf/vector.h`):
-```cpp
-// Default inline capacity for WTF::Vector
-static constexpr size_t kInlineCapacity = 4;
-```
+### Key Reasons
 
-**Attribute Storage** (`third_party/blink/renderer/core/dom/attribute.h`):
-```cpp
-// Preallocated capacity for attribute vectors
-static constexpr int kAttributePrealloc = 10;
-```
+1. **Compatibility Verification**
+   - Ensure parsing matches Chrome, Firefox, Safari
+   - Validate edge case handling
+   - Confirm serialization output
 
-**Source Comments**:
-> "This value is set fairly arbitrarily, to get above what we expect to be the maximum number of attributes on a normal element. It is used for preallocation in Vectors holding Attributes."
+2. **Performance Targets**
+   - Set realistic performance goals based on browser implementations
+   - Identify optimization opportunities
+   - Avoid premature optimization (measure first!)
 
-**Key Findings**:
-- **4-element inline storage** for general-purpose vectors
-- **10-element preallocation** for DOM attribute storage specifically
-- Inline storage is a hot-path optimization for long-lived objects
-- Reduces V8 GC pressure by avoiding heap allocations
+3. **Regression Detection**
+   - Catch performance regressions early
+   - Track improvements over time
+   - Validate optimization effectiveness
 
 ---
 
-### Firefox (Gecko)
+## URL Parsing Performance Characteristics
 
-**Vector Implementation** (`mfbt/Vector.h`):
-```cpp
-// Default inline capacity
-template<typename T, size_t N = 0, class AllocPolicy = ...>
-class Vector;
+### What to Measure
 
-// Commonly used with N=4
-```
+| Operation | Why Measure | Browser Typical Performance |
+|-----------|-------------|----------------------------|
+| **URL parsing** | Core hot path | 1-5 μs for simple URLs |
+| **Host parsing** | Complex (IPv4, IPv6, domain) | 0.5-2 μs |
+| **Percent encoding** | Frequent operation | 0.1-0.5 μs per component |
+| **URL serialization** | Converting URL back to string | 0.5-1 μs |
+| **Relative URL resolution** | Parsing with base URL | 2-10 μs |
+| **Setter operations** | `url.hostname = "..."` | 1-3 μs |
 
-**Documentation** (from source comments):
-> "For hot vectors where we know the typical size, inline storage avoids allocations in ~70-80% of calls."
+### Browser URL Parser Implementations
 
-**Key Findings**:
-- **4-element inline storage** by default
-- **70-80% hit rate** for inline storage in production
-- Critical for DOM manipulation performance
-- Reduces allocator pressure in long-lived pages
+**Chromium (Blink)**:
+- Location: `third_party/blink/renderer/platform/url/kurl.cc`
+- Fast path for ASCII-only URLs
+- Optimized percent encoding lookup tables
+- Inline storage for URL components
 
----
+**Firefox (Gecko)**:
+- Location: `netwerk/base/nsStandardURL.cpp`
+- Lazy component parsing (parse-on-demand)
+- Cached parsing results
+- Minimal allocations for common URLs
 
-### WebKit
-
-**Vector Implementation** (`WTF/Vector.h`):
-- Similar pattern: 4-element default inline capacity
-- Used extensively for DOM element storage
-- Stack-allocated for small, temporary collections
-
----
-
-## Browser Engine Context
-
-### Why Browsers Use Inline Storage
-
-1. **GC Pressure Reduction**
-   - JavaScript heap allocations trigger GC cycles
-   - Inline storage keeps small objects off the managed heap
-   - Critical for V8/SpiderMonkey/JavaScriptCore performance
-
-2. **Long-Lived Pages**
-   - Modern web apps run for hours/days
-   - Continuous DOM manipulation (add/remove nodes, attributes)
-   - Small allocations accumulate into significant GC overhead
-
-3. **Cache Locality**
-   - 4 elements typically fit in a single cache line (64 bytes)
-   - Sequential access patterns benefit from inline data
-   - Reduces pointer chasing for small collections
-
-4. **Allocation Overhead**
-   - Heap allocation requires allocator metadata (8-16 bytes)
-   - Small allocations (< 32 bytes) have high overhead ratio
-   - Inline storage eliminates allocation entirely
+**WebKit**:
+- Location: `Source/WTF/wtf/URL.cpp`
+- Similar patterns to Chromium
+- Fast paths for special schemes (http, https)
 
 ---
 
-## Zig WHATWG Infra Context
+## Benchmarking Strategy
 
-### Key Differences from Browser Engines
+### 1. Microbenchmarks (Single Operation)
 
-| Aspect | Browser Engines | Zig WHATWG Infra |
-|--------|----------------|------------------|
-| **Memory Model** | GC + manual (C++) | Manual only (Zig) |
-| **GC Pressure** | Critical concern | Not applicable |
-| **Allocation Control** | Hidden by GC | Explicit with allocators |
-| **Use Case** | DOM-heavy (attributes) | Generic primitives |
-| **Integration** | JavaScript VM | Native Zig code |
+**Purpose**: Measure individual URL operations in isolation
 
-### Zig Advantages
-
-1. **No GC Overhead**
-   - Inline storage doesn't reduce GC pressure (we have none)
-   - Benefit is purely allocation avoidance + cache locality
-
-2. **Explicit Allocation**
-   - Users pass allocators explicitly
-   - No hidden allocations or pools
-   - Clear memory ownership
-
-3. **Comptime Configuration**
-   - Can configure inline capacity at compile time
-   - Zero runtime overhead for different capacities
-   - Type-safe configuration
-
-4. **Stack-Friendly**
-   - Smaller inline capacity = better stack usage
-   - Zig encourages stack allocation more than C++
-   - No stack overflow risks from large inline buffers
-
-### Long-Lived Page Requirements
-
-**Requirement**: "long lived pages" means Infra primitives may be created, mutated, and destroyed continuously over hours/days of runtime (via zig-js-runtime integration).
-
-**What This Means**:
-- ✅ **Minimize allocations** for small collections (0-4 items)
-- ✅ **Fast append/remove** operations (hot path)
-- ✅ **Cache-friendly** data layout
-- ✅ **Low memory overhead** per collection
-
-**What This Does NOT Mean**:
-- ❌ Optimizing for GC pressure (no GC in Zig)
-- ❌ DOM-specific tuning (Infra is generic)
-- ❌ Complex pool allocators (Zig allocators are simpler)
-
----
-
-## Inline Storage Recommendations
-
-### Decision Matrix
-
-| Collection | Chromium | Firefox | **Zig Infra** | Rationale |
-|------------|----------|---------|---------------|-----------|
-| **List** | 4 inline | 4 inline | **4 inline** | Proven optimal, cache-friendly, ~70-80% hit rate |
-| **OrderedMap** | 10 inline* | TBD | **4 inline** | Generic primitive (not DOM-specific), consistency |
-| **OrderedSet** | N/A | N/A | **4 inline** | Consistency with List, typical use is small |
-
-*Chromium's 10 is for `AttributeVector` specifically (DOM attributes), not general maps.
-
----
-
-### Why 4 Elements?
-
-**Proven in Production**:
-- Both Chromium and Firefox converged on 4 elements independently
-- 70-80% hit rate documented in Firefox source code
-- Optimal balance of memory vs. allocation avoidance
-
-**Cache Alignment**:
-```
-Typical cache line: 64 bytes
-4 pointers:         32 bytes (4 × 8 bytes on 64-bit)
-4 small structs:    32-64 bytes (depending on struct)
-```
-- Fits comfortably in one cache line
-- Sequential access is cache-friendly
-
-**Stack Usage**:
+**Example**:
 ```zig
-// With 4-element inline storage
-const list: List(u32, 4) = ...; // ~48 bytes on stack
-
-// With 10-element inline storage
-const list: List(u32, 10) = ...; // ~96 bytes on stack
-```
-- 4 elements is stack-friendly
-- 10+ elements can cause stack pressure
-
-**Typical Use Cases**:
-- Most Infra lists/maps are small (0-4 items)
-- Examples: algorithm intermediate results, spec step data, small collections
-- DOM attribute lists are an outlier (often 5-10 attributes)
-
----
-
-### Why NOT 10 Elements for OrderedMap?
-
-**Chromium's 10 is DOM-Specific**:
-- HTML elements commonly have: `class`, `id`, `style`, `data-*`, `aria-*`, event handlers
-- Real-world HTML often has 5-10 attributes per element
-- `kAttributePrealloc = 10` is tuned for **DOM attributes only**
-
-**Infra OrderedMap is Generic**:
-- Used for many purposes beyond attributes
-- Most Infra ordered maps are small (2-4 entries)
-- Examples: algorithm options, spec-defined maps, metadata
-- Larger inline capacity hurts the common case
-
-**Consistency Wins**:
-- All Infra collections use 4-element inline storage
-- Simple mental model: "small collections are inline"
-- Easy to remember and reason about
-
-**Stack Overhead**:
-- 10-element inline OrderedMap could be 160+ bytes on stack
-- Most functions don't need that much inline capacity
-- Better to allocate on heap for rare large maps
-
----
-
-## Zig-Specific Optimizations
-
-### What We Adopt from Browsers
-
-✅ **Inline Storage Strategy**
-- Proven to reduce allocations by 70-80%
-- Critical for long-lived page scenarios
-- Cache-friendly for small collections
-
-✅ **4-Element Default Capacity**
-- Optimal balance proven in production
-- Cache-aligned (fits in 64-byte cache line)
-- Stack-friendly (small overhead)
-
-✅ **Lazy Heap Migration**
-- Start inline, migrate to heap when needed
-- Transparent to the user
-- Low overhead for common case
-
----
-
-### What We Skip from Browsers
-
-❌ **GC Pressure Optimization**
-- Zig has no GC
-- Allocation overhead is lower in Zig (explicit allocators)
-- No need to optimize for GC pause times
-
-❌ **DOM-Specific Tuning**
-- No 10-element attribute preallocatio
-- Infra is generic, not HTML-specific
-- Users can create domain-specific wrappers if needed
-
-❌ **Complex Pool Allocators**
-- Browsers use pool allocators for small objects
-- Zig allocators are simpler and more explicit
-- ArenaAllocator covers most pooling needs
-
----
-
-### What We Add (Zig Superpowers)
-
-✅ **Comptime Inline Capacity**
-```zig
-// Default: 4-element inline storage
-var list = List(u32, .{}).init(allocator);
-
-// Custom: 8-element inline storage (if you know your use case)
-var bigList = List(u32, .{ .inline_capacity = 8 }).init(allocator);
-
-// Zero inline storage (heap-only)
-var heapList = List(u32, .{ .inline_capacity = 0 }).init(allocator);
+test "benchmark - parse simple HTTP URL" {
+    const allocator = std.testing.allocator;
+    const url_string = "https://example.com/path?query=value#fragment";
+    
+    var timer = try std.time.Timer.start();
+    const iterations = 100_000;
+    
+    var i: usize = 0;
+    while (i < iterations) : (i += 1) {
+        const url = try URL.parse(allocator, url_string);
+        defer url.deinit();
+    }
+    
+    const elapsed = timer.read();
+    const ns_per_op = elapsed / iterations;
+    
+    std.debug.print("URL.parse(): {} ns/op\n", .{ns_per_op});
+    
+    // Target: < 5000 ns (5 μs) per parse for simple URLs
+    try std.testing.expect(ns_per_op < 5000);
+}
 ```
 
-✅ **Zero-Cost Abstractions**
-- Inline capacity determined at compile time
-- No runtime branching for capacity checks
-- Generic types make this natural in Zig
+### 2. Macro benchmarks (Real-World Scenarios)
 
-✅ **Explicit Memory Control**
-- Users pass allocators explicitly
-- No hidden allocations
-- Clear ownership and lifetime
+**Purpose**: Measure realistic URL workloads
 
-✅ **Better Cache Alignment**
-```zig
-// Zig allows explicit alignment
-const List = struct {
-    items: [inline_capacity]T align(64), // Cache-line aligned
-    ...
+**Examples**:
+- Parse 1000 URLs from a real dataset (e.g., Alexa Top 1000)
+- Measure end-to-end URL resolution with base URLs
+- Test URL setter operations in sequence
+
+### 3. Comparison Benchmarks (Against Browsers)
+
+**Purpose**: Compare Zig performance to browser implementations
+
+**Approach**:
+```javascript
+// JavaScript (run in browser)
+console.time("parse-100k-urls");
+for (let i = 0; i < 100000; i++) {
+    new URL("https://example.com/path?query=value#fragment");
+}
+console.timeEnd("parse-100k-urls");
+```
+
+Then compare against Zig implementation.
+
+---
+
+## URL-Specific Optimization Opportunities
+
+### 1. Percent Encoding Lookup Tables
+
+**Pattern**: Use lookup tables instead of range checks
+
+**Browser implementation** (Chromium):
+```cpp
+// Character class lookup table (256 entries)
+static const char kCharClassTable[256] = {
+    // 0x00-0x1F: control characters
+    kNonASCII, kNonASCII, ...
+    // 0x20: space
+    kQueryCharacter,
+    // ...
 };
 ```
 
----
-
-## Implementation Guidelines
-
-### 1. Default Inline Capacity
-
-**Rule**: All Infra collections default to **4-element inline storage**.
-
+**Zig implementation**:
 ```zig
-pub fn List(comptime T: type, comptime opts: ListOptions) type {
-    const inline_capacity = opts.inline_capacity orelse 4; // Default: 4
-    return struct {
-        inline_storage: [inline_capacity]T = undefined,
-        heap_storage: ?[]T = null,
-        len: usize = 0,
-        capacity: usize = inline_capacity,
-        allocator: Allocator,
-        
-        // Implementation...
-    };
-}
-```
-
----
-
-### 2. Inline → Heap Migration
-
-**Rule**: Migrate lazily when inline storage is exhausted.
-
-```zig
-pub fn append(self: *Self, item: T) !void {
-    if (self.len < inline_capacity) {
-        // Fast path: use inline storage
-        self.inline_storage[self.len] = item;
-        self.len += 1;
-        return;
-    }
+/// Lookup table for percent encoding rules
+/// true = needs encoding, false = allowed unencoded
+const percent_encode_table = blk: {
+    var table: [256]bool = [_]bool{true} ** 256;
     
-    if (self.heap_storage == null) {
-        // First heap allocation: copy inline → heap
-        const new_cap = inline_capacity * 2;
-        const new_storage = try self.allocator.alloc(T, new_cap);
-        @memcpy(new_storage[0..inline_capacity], &self.inline_storage);
-        self.heap_storage = new_storage;
-        self.capacity = new_cap;
-    } else if (self.len >= self.capacity) {
-        // Grow heap storage
-        const new_cap = self.capacity * 2;
-        self.heap_storage = try self.allocator.realloc(self.heap_storage.?, new_cap);
-        self.capacity = new_cap;
-    }
+    // ASCII alphanumeric: always allowed
+    for ('A'..'Z' + 1) |c| table[c] = false;
+    for ('a'..'z' + 1) |c| table[c] = false;
+    for ('0'..'9' + 1) |c| table[c] = false;
     
-    self.heap_storage.?[self.len] = item;
-    self.len += 1;
-}
-```
-
----
-
-### 3. Comptime Configuration
-
-**Rule**: Allow users to override inline capacity at compile time.
-
-```zig
-pub const ListOptions = struct {
-    inline_capacity: ?usize = null, // null = default (4)
+    // Special characters (scheme-specific)
+    table['-'] = false;
+    table['_'] = false;
+    table['.'] = false;
+    table['~'] = false;
+    
+    break :blk table;
 };
 
-// Usage:
-const MyList = List(u32, .{}); // 4-element inline (default)
-const BigList = List(u32, .{ .inline_capacity = 8 }); // 8-element inline
-const HeapList = List(u32, .{ .inline_capacity = 0 }); // Heap-only
+pub inline fn needsPercentEncoding(byte: u8, set: PercentEncodeSet) bool {
+    return percent_encode_table[byte] or isInEncodeSet(byte, set);
+}
 ```
 
----
-
-### 4. Memory Safety
-
-**Rule**: Always test with `std.testing.allocator` to detect leaks.
-
+**Benchmark**:
 ```zig
-test "list inline storage - no leaks" {
-    const allocator = std.testing.allocator;
+test "benchmark - percent encoding" {
+    const input = "hello world! 100% awesome";
     
-    var list = List(u32, .{}).init(allocator);
-    defer list.deinit(); // Must clean up heap if allocated
-    
-    // Add 3 items (inline storage only)
-    try list.append(1);
-    try list.append(2);
-    try list.append(3);
-    
-    try std.testing.expectEqual(@as(usize, 3), list.len);
-    
-    // No heap allocation yet
-    try std.testing.expectEqual(@as(?[]u32, null), list.heap_storage);
-}
-
-test "list heap migration - no leaks" {
-    const allocator = std.testing.allocator;
-    
-    var list = List(u32, .{}).init(allocator);
-    defer list.deinit();
-    
-    // Add 5 items (triggers heap migration at 5th)
-    try list.append(1);
-    try list.append(2);
-    try list.append(3);
-    try list.append(4);
-    try list.append(5); // Migrates to heap
-    
-    try std.testing.expectEqual(@as(usize, 5), list.len);
-    
-    // Heap storage allocated
-    try std.testing.expect(list.heap_storage != null);
-}
-```
-
----
-
-## Performance Considerations
-
-### Allocation Avoidance
-
-**Small Collections (0-4 items)**:
-```
-Without inline storage: 1 heap allocation per collection
-With inline storage:    0 heap allocations
-Savings:               100% allocation avoidance
-```
-
-**Medium Collections (5-8 items)**:
-```
-Without inline storage: 1 heap allocation + potential reallocs
-With inline storage:    1 heap allocation (after inline exhausted)
-Savings:               Delayed allocation, fewer reallocs
-```
-
----
-
-### Cache Locality
-
-**Sequential Access**:
-```zig
-// Inline storage: all items in one cache line
-for (list.items()) |item| {
-    process(item); // Fast: cache-friendly
-}
-```
-
-**Heap Storage**:
-```zig
-// Heap storage: one pointer dereference, then sequential
-for (list.items()) |item| {
-    process(item); // Still fast if heap is cache-aligned
-}
-```
-
----
-
-### Stack Usage
-
-**Inline Storage Overhead**:
-```
-List(u32, 4):        ~48 bytes  (4 items + metadata)
-List(u32, 10):       ~96 bytes  (10 items + metadata)
-OrderedMap(K,V, 4):  ~80 bytes  (4 entries + metadata)
-```
-
-**Guideline**: Keep inline capacity ≤ 8 to avoid stack pressure.
-
----
-
-## Testing Requirements
-
-### Coverage
-
-1. **Inline-only operations**
-   - Append/remove within inline capacity
-   - No heap allocation
-   - Memory leak check
-
-2. **Inline → Heap migration**
-   - Trigger migration (add 5th item)
-   - Verify data copied correctly
-   - Memory leak check
-
-3. **Heap-only operations**
-   - Operations after migration
-   - Reallocation (growth)
-   - Memory leak check
-
-4. **Custom inline capacity**
-   - Comptime configuration
-   - Verify capacity respected
-   - Edge cases (0, 1, 100)
-
----
-
-### Example Test Suite
-
-```zig
-test "List inline storage" {
-    const allocator = std.testing.allocator;
-    
-    var list = List(u32, .{}).init(allocator);
-    defer list.deinit();
-    
-    // Test 1: Inline-only (0-4 items)
-    try list.append(1);
-    try list.append(2);
-    try list.append(3);
-    try list.append(4);
-    try std.testing.expectEqual(@as(usize, 4), list.len);
-    try std.testing.expectEqual(@as(?[]u32, null), list.heap_storage);
-    
-    // Test 2: Migration (5th item)
-    try list.append(5);
-    try std.testing.expectEqual(@as(usize, 5), list.len);
-    try std.testing.expect(list.heap_storage != null);
-    
-    // Test 3: Verify data integrity
-    try std.testing.expectEqual(@as(u32, 1), list.get(0));
-    try std.testing.expectEqual(@as(u32, 5), list.get(4));
-}
-
-test "List custom inline capacity" {
-    const allocator = std.testing.allocator;
-    
-    // Zero inline capacity (heap-only)
-    var heap_list = List(u32, .{ .inline_capacity = 0 }).init(allocator);
-    defer heap_list.deinit();
-    
-    try heap_list.append(1); // First item triggers heap allocation
-    try std.testing.expect(heap_list.heap_storage != null);
-    
-    // Large inline capacity
-    var big_list = List(u32, .{ .inline_capacity = 8 }).init(allocator);
-    defer big_list.deinit();
-    
-    for (0..8) |i| {
-        try big_list.append(@intCast(i));
+    var timer = try std.time.Timer.start();
+    var i: usize = 0;
+    while (i < 100_000) : (i += 1) {
+        const encoded = try percentEncode(allocator, input, .path);
+        defer allocator.free(encoded);
     }
-    try std.testing.expectEqual(@as(?[]u32, null), big_list.heap_storage);
+    const elapsed = timer.read();
+    std.debug.print("percentEncode: {} ns/op\n", .{elapsed / 100_000});
+}
+```
+
+### 2. Fast Path for ASCII-Only URLs
+
+**Pattern**: Detect ASCII-only URLs early, skip UTF-8 validation
+
+**Implementation**:
+```zig
+pub fn parseURL(allocator: Allocator, input: []const u8) !URL {
+    // Fast check: is input pure ASCII?
+    var is_ascii = true;
+    for (input) |byte| {
+        if (byte >= 0x80) {
+            is_ascii = false;
+            break;
+        }
+    }
     
-    try big_list.append(9); // 9th item triggers migration
-    try std.testing.expect(big_list.heap_storage != null);
+    if (is_ascii) {
+        // Fast path: skip UTF-8 validation, simpler parsing
+        return parseASCIIURL(allocator, input);
+    } else {
+        // Slow path: full UTF-8 handling
+        return parseUnicodeURL(allocator, input);
+    }
+}
+```
+
+**Benchmark**:
+```zig
+test "benchmark - ASCII fast path" {
+    const ascii_url = "https://example.com/path";
+    const unicode_url = "https://例え.jp/パス";
+    
+    // ASCII fast path
+    var timer = try std.time.Timer.start();
+    var i: usize = 0;
+    while (i < 100_000) : (i += 1) {
+        const url = try URL.parse(allocator, ascii_url);
+        defer url.deinit();
+    }
+    const ascii_time = timer.read();
+    
+    // Unicode slow path
+    timer.reset();
+    i = 0;
+    while (i < 100_000) : (i += 1) {
+        const url = try URL.parse(allocator, unicode_url);
+        defer url.deinit();
+    }
+    const unicode_time = timer.read();
+    
+    std.debug.print("ASCII: {} ns/op, Unicode: {} ns/op\n", 
+        .{ascii_time / 100_000, unicode_time / 100_000});
+    
+    // ASCII path should be faster
+    try std.testing.expect(ascii_time < unicode_time);
+}
+```
+
+### 3. Host Parsing Cache (IPv4/IPv6 Detection)
+
+**Pattern**: Quick validation before full parsing
+
+**Implementation**:
+```zig
+pub fn parseHost(input: []const u8) !Host {
+    // Quick check: IPv4 pattern (digits and dots only)
+    if (looksLikeIPv4(input)) {
+        return Host{ .ipv4 = try parseIPv4(input) };
+    }
+    
+    // Quick check: IPv6 pattern (starts with '[')
+    if (input.len > 0 and input[0] == '[') {
+        return Host{ .ipv6 = try parseIPv6(input) };
+    }
+    
+    // Domain name parsing
+    return Host{ .domain = try parseDomain(input) };
+}
+
+fn looksLikeIPv4(input: []const u8) bool {
+    if (input.len == 0) return false;
+    
+    // Fast check: only digits and dots
+    for (input) |byte| {
+        if (byte != '.' and (byte < '0' or byte > '9')) {
+            return false;
+        }
+    }
+    return true;
+}
+```
+
+### 4. URL Serialization with Capacity Hints
+
+**Pattern**: Preallocate buffer based on component sizes
+
+**Implementation**:
+```zig
+pub fn serialize(self: *const URL, allocator: Allocator) ![]u8 {
+    // Calculate minimum size needed
+    var capacity: usize = 0;
+    capacity += self.scheme.len + 1; // "scheme:"
+    if (self.host) |host| {
+        capacity += 2; // "//"
+        capacity += estimateHostSize(host);
+    }
+    if (self.port) |_| {
+        capacity += 6; // ":12345"
+    }
+    capacity += self.path.len;
+    if (self.query) |q| capacity += 1 + q.len;
+    if (self.fragment) |f| capacity += 1 + f.len;
+    
+    // Preallocate (avoids reallocation)
+    var result = try std.ArrayList(u8).initCapacity(allocator, capacity);
+    errdefer result.deinit();
+    
+    // Serialize components
+    try result.appendSlice(self.scheme);
+    try result.append(':');
+    // ... (rest of serialization)
+    
+    return result.toOwnedSlice();
+}
+```
+
+### 5. Special Scheme Fast Paths
+
+**Pattern**: Optimize for common schemes (http, https, file)
+
+**Implementation**:
+```zig
+pub fn parseURL(allocator: Allocator, input: []const u8) !URL {
+    // Detect special schemes early
+    const scheme = try extractScheme(input);
+    
+    if (isSpecialScheme(scheme)) {
+        // Fast path for http, https, file, ftp, ws, wss
+        return parseSpecialURL(allocator, input, scheme);
+    } else {
+        // Generic URL parsing
+        return parseGenericURL(allocator, input, scheme);
+    }
+}
+
+inline fn isSpecialScheme(scheme: []const u8) bool {
+    return std.mem.eql(u8, scheme, "http") or
+           std.mem.eql(u8, scheme, "https") or
+           std.mem.eql(u8, scheme, "file") or
+           std.mem.eql(u8, scheme, "ftp") or
+           std.mem.eql(u8, scheme, "ws") or
+           std.mem.eql(u8, scheme, "wss");
 }
 ```
 
 ---
 
-## Benchmarking
+## Benchmarking Tools
 
-### Measurement Criteria
-
-1. **Allocation Count**
-   - Measure heap allocations for small collections (0-4 items)
-   - Target: 0 allocations for inline-only operations
-
-2. **Append Performance**
-   - Measure time to append to small vs. large lists
-   - Compare inline vs. heap performance
-
-3. **Memory Usage**
-   - Measure total memory per collection (stack + heap)
-   - Verify inline capacity overhead is acceptable
-
-4. **Cache Performance**
-   - Measure cache misses for sequential access
-   - Compare inline vs. heap storage
-
----
-
-### Example Benchmark
+### 1. Zig Built-in Timer
 
 ```zig
 const std = @import("std");
-const List = @import("list.zig").List;
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+pub fn benchmark(comptime name: []const u8, iterations: usize, func: anytype) !void {
+    var timer = try std.time.Timer.start();
     
-    const iterations = 1_000_000;
-    
-    // Benchmark 1: Small list (inline storage)
-    {
-        var timer = try std.time.Timer.start();
-        for (0..iterations) |_| {
-            var list = List(u32, .{}).init(allocator);
-            defer list.deinit();
-            try list.append(1);
-            try list.append(2);
-            try list.append(3);
-        }
-        const elapsed = timer.read();
-        std.debug.print("Small list (inline): {d}ms\n", .{elapsed / 1_000_000});
+    var i: usize = 0;
+    while (i < iterations) : (i += 1) {
+        func();
     }
     
-    // Benchmark 2: Large list (heap storage)
-    {
-        var timer = try std.time.Timer.start();
-        for (0..iterations) |_| {
-            var list = List(u32, .{}).init(allocator);
-            defer list.deinit();
-            for (0..10) |i| {
-                try list.append(@intCast(i));
-            }
-        }
-        const elapsed = timer.read();
-        std.debug.print("Large list (heap): {d}ms\n", .{elapsed / 1_000_000});
-    }
+    const elapsed = timer.read();
+    const ns_per_op = elapsed / iterations;
+    
+    std.debug.print("{s}: {} ns/op ({d:.2} μs/op)\n", 
+        .{name, ns_per_op, @as(f64, @floatFromInt(ns_per_op)) / 1000.0});
 }
 ```
+
+### 2. Browser DevTools (for comparison)
+
+**Chrome DevTools**:
+```javascript
+// Microbenchmark
+console.time("parse-url");
+for (let i = 0; i < 100000; i++) {
+    new URL("https://example.com/path?query#fragment");
+}
+console.timeEnd("parse-url");
+
+// Detailed profiling
+performance.mark("start");
+for (let i = 0; i < 100000; i++) {
+    new URL("https://example.com/path?query#fragment");
+}
+performance.mark("end");
+performance.measure("url-parse", "start", "end");
+console.log(performance.getEntriesByName("url-parse"));
+```
+
+### 3. Criterion-like Benchmarking
+
+```zig
+// Simple benchmark suite
+pub const BenchmarkSuite = struct {
+    allocator: Allocator,
+    
+    pub fn init(allocator: Allocator) BenchmarkSuite {
+        return .{ .allocator = allocator };
+    }
+    
+    pub fn run(self: BenchmarkSuite, comptime name: []const u8, func: anytype) !void {
+        const iterations = 100_000;
+        var timer = try std.time.Timer.start();
+        
+        var i: usize = 0;
+        while (i < iterations) : (i += 1) {
+            try func(self.allocator);
+        }
+        
+        const elapsed = timer.read();
+        const ns_per_op = elapsed / iterations;
+        
+        std.debug.print("{s}: {} ns/op\n", .{name, ns_per_op});
+    }
+};
+
+// Usage
+test "benchmark suite" {
+    var suite = BenchmarkSuite.init(std.testing.allocator);
+    
+    try suite.run("parse-simple-url", parseSimpleURL);
+    try suite.run("parse-complex-url", parseComplexURL);
+    try suite.run("parse-relative-url", parseRelativeURL);
+}
+```
+
+---
+
+## Real-World URL Datasets
+
+### Test Against Real URLs
+
+**Alexa Top 1000**:
+- Download real-world URLs
+- Parse each one
+- Measure aggregate performance
+
+**Example dataset**:
+```
+https://www.google.com
+https://www.youtube.com
+https://www.facebook.com
+https://www.amazon.com
+https://www.wikipedia.org
+...
+```
+
+**Benchmark**:
+```zig
+test "benchmark - real-world URLs" {
+    const urls = @embedFile("../data/alexa-top-1000.txt");
+    var lines = std.mem.split(u8, urls, "\n");
+    
+    var timer = try std.time.Timer.start();
+    var count: usize = 0;
+    
+    while (lines.next()) |line| {
+        if (line.len == 0) continue;
+        
+        const url = try URL.parse(allocator, line);
+        defer url.deinit();
+        count += 1;
+    }
+    
+    const elapsed = timer.read();
+    const ns_per_url = elapsed / count;
+    
+    std.debug.print("Parsed {} real URLs: {} ns/op\n", .{count, ns_per_url});
+}
+```
+
+---
+
+## Performance Targets
+
+### Realistic Goals (Based on Browser Performance)
+
+| Operation | Target | Notes |
+|-----------|--------|-------|
+| **Simple URL parse** | < 5 μs | `https://example.com/path` |
+| **Complex URL parse** | < 10 μs | With query, fragment, IPv6 |
+| **Host parse (domain)** | < 2 μs | ASCII domain names |
+| **Host parse (IPv4)** | < 1 μs | Simple numeric parsing |
+| **Host parse (IPv6)** | < 3 μs | Complex parsing |
+| **Percent encoding** | < 500 ns | Per component (path, query) |
+| **URL serialization** | < 1 μs | Converting back to string |
+
+**Note**: These are approximate targets. Actual browser performance varies by:
+- CPU architecture
+- Compiler optimizations
+- Input characteristics (ASCII vs Unicode, simple vs complex)
+
+---
+
+## Avoiding Premature Optimization
+
+### Optimization Workflow
+
+1. **Implement correctly first**
+   - Follow WHATWG URL spec exactly
+   - Pass all tests
+   - Ensure spec compliance
+
+2. **Measure baseline**
+   - Benchmark current implementation
+   - Identify hot spots with profiling
+   - Set realistic targets
+
+3. **Optimize hot paths**
+   - Focus on frequently-called operations
+   - Measure before and after
+   - Verify correctness still holds
+
+4. **Validate improvements**
+   - Re-run full test suite
+   - Compare against browsers
+   - Check for regressions
+
+### Red Flags (Don't Optimize Yet)
+
+- ❌ No baseline measurements
+- ❌ No clear performance problem
+- ❌ Tests don't pass
+- ❌ Spec compliance uncertain
+
+### Green Lights (OK to Optimize)
+
+- ✅ Tests pass (100% coverage)
+- ✅ Spec compliant
+- ✅ Baseline measured
+- ✅ Clear bottleneck identified
+
+---
+
+## Integration with Other Skills
+
+### With whatwg_spec
+
+- Read `specs/url.md` to understand algorithm complexity
+- Identify optimization opportunities in spec algorithms
+- Ensure optimizations don't break spec compliance
+
+### With testing_requirements
+
+- Write performance regression tests
+- Ensure optimizations pass all functional tests
+- Add benchmark tests for critical paths
+
+### With performance_optimization
+
+- Apply general Zig optimization patterns
+- Use lookup tables, fast paths, inline functions
+- Minimize allocations
 
 ---
 
 ## Summary
 
-### Key Takeaways
+**Key Principles:**
 
-1. **4-element inline storage is optimal**
-   - Proven in Chromium and Firefox
-   - 70-80% allocation avoidance
-   - Cache-friendly (fits in 64-byte cache line)
+1. **Measure before optimizing** - Get baseline performance
+2. **Compare against browsers** - Set realistic targets
+3. **Focus on hot paths** - URL parsing, host parsing, percent encoding
+4. **Use lookup tables** - Avoid range checks
+5. **Fast path for ASCII** - Most URLs are ASCII-only
+6. **Preallocate buffers** - Avoid reallocation
+7. **Verify correctness** - Never sacrifice spec compliance for speed
 
-2. **Consistency across collections**
-   - List, OrderedMap, OrderedSet all use 4 elements
-   - Simple mental model
-   - No DOM-specific tuning (10 attributes)
+**Workflow:**
+1. Implement correctly (spec-compliant)
+2. Measure baseline
+3. Identify bottlenecks
+4. Optimize hot paths
+5. Verify improvements
+6. Compare against browsers
 
-3. **Zig advantages over C++ browsers**
-   - Comptime configuration (zero-cost abstraction)
-   - No GC pressure (simpler optimization target)
-   - Explicit memory control (allocators, alignment)
-
-4. **Long-lived page optimization**
-   - Minimize allocations for small collections
-   - Fast append/remove (hot path)
-   - Low memory overhead per collection
-
-5. **Testing is critical**
-   - Always use `std.testing.allocator`
-   - Test inline, migration, and heap separately
-   - Verify no memory leaks
-
----
-
-## References
-
-- Chromium: `third_party/blink/renderer/platform/wtf/vector.h`
-- Chromium: `third_party/blink/renderer/core/dom/attribute.h`
-- Firefox: `mfbt/Vector.h`
-- Firefox: Source comment: "~70-80% of calls benefit from inline storage"
-- WebKit: `WTF/Vector.h`
-
----
-
-**Last Updated**: 2025-10-27
+**Remember**: URL parsing must match browser behavior. Performance matters, but correctness comes first.

@@ -4,7 +4,7 @@
 
 Load this skill automatically when:
 - Writing or refactoring Zig code
-- Implementing Infra algorithms in Zig
+- Implementing Infra primitives in Zig
 - Designing struct layouts and type systems
 - Managing memory with allocators
 - Handling errors in Infra operations
