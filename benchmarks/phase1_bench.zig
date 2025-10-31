@@ -1,6 +1,7 @@
 const std = @import("std");
 const infra = @import("infra");
 const List = infra.List;
+const ListWithCapacity = infra.ListWithCapacity;
 const OrderedMap = infra.OrderedMap;
 const string = infra.string;
 
@@ -13,6 +14,85 @@ fn benchmark(name: []const u8, comptime func: fn () anyerror!void) !void {
     const elapsed = @as(f64, @floatFromInt(end - start)) / 1_000_000.0;
     const per_op = elapsed / @as(f64, @floatFromInt(ITERATIONS));
     std.debug.print("{s}: {d:.2} ms total, {d:.2} ns/op\n", .{ name, elapsed, per_op });
+}
+
+// ============================================================================
+// Configurable Inline Capacity Benchmarks
+// ============================================================================
+
+fn benchListCapacity0Append() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var i: usize = 0;
+    while (i < ITERATIONS) : (i += 1) {
+        var list = ListWithCapacity(u32, 0).init(allocator);
+        defer list.deinit();
+        try list.append(1);
+        try list.append(2);
+        try list.append(3);
+    }
+}
+
+fn benchListCapacity2Append() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var i: usize = 0;
+    while (i < ITERATIONS) : (i += 1) {
+        var list = ListWithCapacity(u32, 2).init(allocator);
+        defer list.deinit();
+        try list.append(1);
+        try list.append(2);
+        try list.append(3);
+    }
+}
+
+fn benchListCapacity4Append() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var i: usize = 0;
+    while (i < ITERATIONS) : (i += 1) {
+        var list = List(u32).init(allocator); // Default capacity = 4
+        defer list.deinit();
+        try list.append(1);
+        try list.append(2);
+        try list.append(3);
+    }
+}
+
+fn benchListCapacity8Append() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var i: usize = 0;
+    while (i < ITERATIONS) : (i += 1) {
+        var list = ListWithCapacity(u32, 8).init(allocator);
+        defer list.deinit();
+        try list.append(1);
+        try list.append(2);
+        try list.append(3);
+    }
+}
+
+fn benchListCapacity16Append() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var i: usize = 0;
+    while (i < ITERATIONS) : (i += 1) {
+        var list = ListWithCapacity(u32, 16).init(allocator);
+        defer list.deinit();
+        try list.append(1);
+        try list.append(2);
+        try list.append(3);
+    }
 }
 
 // ============================================================================
@@ -305,7 +385,14 @@ fn benchMapGetStringKey() !void {
 pub fn main() !void {
     std.debug.print("\n=== Phase 1 Benchmarks (Missing Operations) ===\n\n", .{});
 
-    std.debug.print("--- List Batch Operations ---\n", .{});
+    std.debug.print("--- Configurable Inline Capacity ---\n", .{});
+    try benchmark("capacity=0 (always heap, 3 items)", benchListCapacity0Append);
+    try benchmark("capacity=2 (tiny, 3 items)", benchListCapacity2Append);
+    try benchmark("capacity=4 (default, 3 items)", benchListCapacity4Append);
+    try benchmark("capacity=8 (medium, 3 items)", benchListCapacity8Append);
+    try benchmark("capacity=16 (large, 3 items)", benchListCapacity16Append);
+
+    std.debug.print("\n--- List Batch Operations ---\n", .{});
     try benchmark("appendSlice (3 items, inline)", benchListAppendSliceInline);
     try benchmark("appendSlice (10 items, mixed)", benchListAppendSliceMixed);
     try benchmark("appendSlice (20 items, heap)", benchListAppendSliceHeap);

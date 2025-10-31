@@ -27,6 +27,7 @@ pub const String = string.String;
 pub const CodePoint = code_point.CodePoint;
 pub const ByteSequence = bytes.ByteSequence;
 pub const List = list.List;
+pub const ListWithCapacity = list.ListWithCapacity;
 pub const OrderedMap = map.OrderedMap;
 pub const OrderedSet = set.OrderedSet;
 pub const Stack = stack.Stack;

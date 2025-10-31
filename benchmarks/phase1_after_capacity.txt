@@ -1,0 +1,37 @@
+
+=== Phase 1 Benchmarks (Missing Operations) ===
+
+--- Configurable Inline Capacity ---
+capacity=0 (always heap, 3 items): 492.87 ms total, 0.00 ns/op
+capacity=2 (tiny, 3 items): 537.46 ms total, 0.01 ns/op
+capacity=4 (default, 3 items): 0.46 ms total, 0.00 ns/op
+capacity=8 (medium, 3 items): 0.46 ms total, 0.00 ns/op
+capacity=16 (large, 3 items): 0.46 ms total, 0.00 ns/op
+
+--- List Batch Operations ---
+appendSlice (3 items, inline): 0.35 ms total, 0.00 ns/op
+appendSlice (10 items, mixed): 734.93 ms total, 0.01 ns/op
+appendSlice (20 items, heap): 76.20 ms total, 0.00 ns/op
+multiple appends (10 calls): 738.64 ms total, 0.01 ns/op
+
+--- String Comparison (eql) ---
+eql (short, equal): 0.00 ms total, 0.00 ns/op
+eql (short, unequal): 0.00 ms total, 0.00 ns/op
+eql (long 64 chars, equal): 0.00 ms total, 0.00 ns/op
+eql (long 64 chars, differ at end): 0.00 ms total, 0.00 ns/op
+
+--- String indexOf ---
+indexOf (char, short string): 0.00 ms total, 0.00 ns/op
+indexOf (char, long string): 0.00 ms total, 0.00 ns/op
+indexOf (char, not found): 0.00 ms total, 0.00 ns/op
+
+--- ASCII Detection ---
+isAscii (short, 11 chars): 0.00 ms total, 0.00 ns/op
+isAscii (medium, 64 chars): 0.00 ms total, 0.00 ns/op
+isAscii (long, 256 chars): 0.00 ms total, 0.00 ns/op
+isAscii (non-ASCII, fail fast): 0.00 ms total, 0.00 ns/op
+
+--- Map Key Type Specialization ---
+get (integer key): 0.01 ms total, 0.00 ns/op
+get (string key): 0.01 ms total, 0.00 ns/op
+

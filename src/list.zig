@@ -135,7 +135,9 @@ pub fn ListWithCapacity(comptime T: type, comptime inline_capacity: usize) type 
                 const item = heap.orderedRemove(index);
                 self.len -= 1;
                 return item;
-            } else {
+            }
+
+            if (comptime inline_capacity > 0) {
                 const item = self.inline_storage[index];
                 var i = index;
                 while (i < self.len - 1) : (i += 1) {
@@ -144,6 +146,8 @@ pub fn ListWithCapacity(comptime T: type, comptime inline_capacity: usize) type 
                 self.len -= 1;
                 return item;
             }
+
+            unreachable;
         }
 
         pub fn replace(self: *Self, index: usize, item: T) !T {
@@ -155,11 +159,15 @@ pub fn ListWithCapacity(comptime T: type, comptime inline_capacity: usize) type 
                 const old = heap.items[index];
                 heap.items[index] = item;
                 return old;
-            } else {
+            }
+
+            if (comptime inline_capacity > 0) {
                 const old = self.inline_storage[index];
                 self.inline_storage[index] = item;
                 return old;
             }
+
+            unreachable;
         }
 
         pub fn get(self: *const Self, index: usize) ?T {
@@ -169,9 +177,13 @@ pub fn ListWithCapacity(comptime T: type, comptime inline_capacity: usize) type 
 
             if (self.heap_storage) |heap| {
                 return heap.items[index];
-            } else {
+            }
+
+            if (comptime inline_capacity > 0) {
                 return self.inline_storage[index];
             }
+
+            return null;
         }
 
         pub fn contains(self: *const Self, item: T) bool {
@@ -179,7 +191,10 @@ pub fn ListWithCapacity(comptime T: type, comptime inline_capacity: usize) type 
                 for (heap.items) |elem| {
                     if (std.meta.eql(elem, item)) return true;
                 }
-            } else {
+                return false;
+            }
+
+            if (comptime inline_capacity > 0) {
                 for (self.inline_storage[0..self.len]) |elem| {
                     if (std.meta.eql(elem, item)) return true;
                 }
@@ -215,7 +230,7 @@ pub fn ListWithCapacity(comptime T: type, comptime inline_capacity: usize) type 
                 for (heap.items) |item| {
                     try new_list.append(item);
                 }
-            } else {
+            } else if (comptime inline_capacity > 0) {
                 for (self.inline_storage[0..self.len]) |item| {
                     try new_list.append(item);
                 }
@@ -229,7 +244,7 @@ pub fn ListWithCapacity(comptime T: type, comptime inline_capacity: usize) type 
                 for (heap.items) |item| {
                     try self.append(item);
                 }
-            } else {
+            } else if (comptime inline_capacity > 0) {
                 for (other.inline_storage[0..other.len]) |item| {
                     try self.append(item);
                 }
@@ -243,7 +258,7 @@ pub fn ListWithCapacity(comptime T: type, comptime inline_capacity: usize) type 
                         return lessThan(a, b);
                     }
                 }.inner);
-            } else {
+            } else if (comptime inline_capacity > 0) {
                 std.mem.sort(T, self.inline_storage[0..self.len], {}, struct {
                     fn inner(_: void, a: T, b: T) bool {
                         return lessThan(a, b);
@@ -259,7 +274,7 @@ pub fn ListWithCapacity(comptime T: type, comptime inline_capacity: usize) type 
                         return lessThan(b, a);
                     }
                 }.inner);
-            } else {
+            } else if (comptime inline_capacity > 0) {
                 std.mem.sort(T, self.inline_storage[0..self.len], {}, struct {
                     fn inner(_: void, a: T, b: T) bool {
                         return lessThan(b, a);
@@ -287,7 +302,7 @@ pub fn ListWithCapacity(comptime T: type, comptime inline_capacity: usize) type 
                         heap.items[i] = item;
                     }
                 }
-            } else {
+            } else if (comptime inline_capacity > 0) {
                 for (self.inline_storage[0..self.len], 0..) |elem, i| {
                     if (condition(elem)) {
                         self.inline_storage[i] = item;
@@ -303,7 +318,13 @@ pub fn ListWithCapacity(comptime T: type, comptime inline_capacity: usize) type 
         pub fn removeMatching(self: *Self, condition: fn (T) bool) void {
             var i: usize = 0;
             while (i < self.len) {
-                const elem = if (self.heap_storage) |heap| heap.items[i] else self.inline_storage[i];
+                const elem = if (self.heap_storage) |heap|
+                    heap.items[i]
+                else if (comptime inline_capacity > 0)
+                    self.inline_storage[i]
+                else
+                    unreachable;
+
                 if (condition(elem)) {
                     _ = self.remove(i) catch unreachable;
                 } else {
@@ -315,9 +336,13 @@ pub fn ListWithCapacity(comptime T: type, comptime inline_capacity: usize) type 
         pub fn items(self: *const Self) []const T {
             if (self.heap_storage) |heap| {
                 return heap.items;
-            } else {
+            }
+
+            if (comptime inline_capacity > 0) {
                 return self.inline_storage[0..self.len];
             }
+
+            return &[_]T{};
         }
 
         pub fn ensureCapacity(self: *Self, capacity: usize) !void {
@@ -336,10 +361,15 @@ pub fn ListWithCapacity(comptime T: type, comptime inline_capacity: usize) type 
 
         fn ensureHeap(self: *Self) !void {
             if (self.heap_storage == null) {
-                var heap = try std.ArrayList(T).initCapacity(self.allocator, inline_capacity * 2);
-                for (self.inline_storage[0..self.len]) |item| {
-                    try heap.append(self.allocator, item);
+                const initial_capacity = if (inline_capacity > 0) inline_capacity * 2 else 4;
+                var heap = try std.ArrayList(T).initCapacity(self.allocator, initial_capacity);
+
+                if (comptime inline_capacity > 0) {
+                    for (self.inline_storage[0..self.len]) |item| {
+                        try heap.append(self.allocator, item);
+                    }
                 }
+
                 self.heap_storage = heap;
             }
         }
@@ -709,4 +739,120 @@ test "List - getIndices" {
     try std.testing.expectEqual(@as(usize, 0), indices[0]);
     try std.testing.expectEqual(@as(usize, 1), indices[1]);
     try std.testing.expectEqual(@as(usize, 2), indices[2]);
+}
+
+// ============================================================================
+// Configurable Inline Capacity Tests
+// ============================================================================
+
+test "ListWithCapacity - inline_capacity = 0 (always heap)" {
+    const allocator = std.testing.allocator;
+    var list = ListWithCapacity(u32, 0).init(allocator);
+    defer list.deinit();
+
+    // First append should go to heap immediately
+    try list.append(1);
+    try std.testing.expect(list.heap_storage != null);
+    try std.testing.expectEqual(@as(usize, 1), list.size());
+}
+
+test "ListWithCapacity - inline_capacity = 2 (tiny)" {
+    const allocator = std.testing.allocator;
+    var list = ListWithCapacity(u32, 2).init(allocator);
+    defer list.deinit();
+
+    // First 2 should be inline
+    try list.append(1);
+    try list.append(2);
+    try std.testing.expect(list.heap_storage == null);
+    try std.testing.expectEqual(@as(usize, 2), list.size());
+
+    // Third should spill to heap
+    try list.append(3);
+    try std.testing.expect(list.heap_storage != null);
+    try std.testing.expectEqual(@as(usize, 3), list.size());
+}
+
+test "ListWithCapacity - inline_capacity = 8 (medium)" {
+    const allocator = std.testing.allocator;
+    var list = ListWithCapacity(u32, 8).init(allocator);
+    defer list.deinit();
+
+    // First 8 should be inline
+    var i: u32 = 0;
+    while (i < 8) : (i += 1) {
+        try list.append(i);
+    }
+    try std.testing.expect(list.heap_storage == null);
+    try std.testing.expectEqual(@as(usize, 8), list.size());
+
+    // 9th should spill to heap
+    try list.append(8);
+    try std.testing.expect(list.heap_storage != null);
+    try std.testing.expectEqual(@as(usize, 9), list.size());
+}
+
+test "ListWithCapacity - inline_capacity = 16 (large)" {
+    const allocator = std.testing.allocator;
+    var list = ListWithCapacity(u32, 16).init(allocator);
+    defer list.deinit();
+
+    // First 16 should be inline
+    var i: u32 = 0;
+    while (i < 16) : (i += 1) {
+        try list.append(i);
+    }
+    try std.testing.expect(list.heap_storage == null);
+    try std.testing.expectEqual(@as(usize, 16), list.size());
+
+    // 17th should spill to heap
+    try list.append(16);
+    try std.testing.expect(list.heap_storage != null);
+    try std.testing.expectEqual(@as(usize, 17), list.size());
+}
+
+test "ListWithCapacity - appendSlice with inline_capacity = 0" {
+    const allocator = std.testing.allocator;
+    var list = ListWithCapacity(u32, 0).init(allocator);
+    defer list.deinit();
+
+    const items = [_]u32{ 1, 2, 3, 4, 5 };
+    try list.appendSlice(&items);
+
+    try std.testing.expect(list.heap_storage != null);
+    try std.testing.expectEqual(@as(usize, 5), list.size());
+    try std.testing.expectEqual(@as(u32, 1), list.get(0).?);
+    try std.testing.expectEqual(@as(u32, 5), list.get(4).?);
+}
+
+test "ListWithCapacity - appendSlice all inline (capacity = 8)" {
+    const allocator = std.testing.allocator;
+    var list = ListWithCapacity(u32, 8).init(allocator);
+    defer list.deinit();
+
+    const items = [_]u32{ 1, 2, 3, 4 };
+    try list.appendSlice(&items);
+
+    try std.testing.expect(list.heap_storage == null);
+    try std.testing.expectEqual(@as(usize, 4), list.size());
+}
+
+test "ListWithCapacity - appendSlice mixed (capacity = 4)" {
+    const allocator = std.testing.allocator;
+    var list = ListWithCapacity(u32, 4).init(allocator);
+    defer list.deinit();
+
+    // Add 2 items inline first
+    try list.append(1);
+    try list.append(2);
+    try std.testing.expect(list.heap_storage == null);
+
+    // Add 6 more (2 inline, 4 heap)
+    const items = [_]u32{ 3, 4, 5, 6, 7, 8 };
+    try list.appendSlice(&items);
+
+    try std.testing.expect(list.heap_storage != null);
+    try std.testing.expectEqual(@as(usize, 8), list.size());
+    try std.testing.expectEqual(@as(u32, 1), list.get(0).?);
+    try std.testing.expectEqual(@as(u32, 8), list.get(7).?);
 }
