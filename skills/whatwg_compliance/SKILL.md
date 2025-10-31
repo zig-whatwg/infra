@@ -3,21 +3,24 @@
 ## When to use this skill
 
 Load this skill automatically when:
-- Implementing Infra algorithms or data structures
-- Understanding Infra type definitions
-- Verifying spec compliance for primitives
-- Mapping Infra types to Zig types
+- Implementing Infra primitives
+- Understanding Infra data structure definitions
+- Verifying spec compliance for Infra operations
+- Mapping Infra concepts to Zig types
 - Checking algorithm correctness
 
 ## What this skill provides
 
-This skill contains the complete, authoritative WHATWG Infra specification - NOT fragments or grep results. Read specifications holistically to understand:
+This skill provides **Zig implementation patterns** for WHATWG Infra Standard concepts:
 
-- Complete algorithm specifications with all steps
-- Data structure definitions and operations
-- Primitive type definitions and constraints
-- Edge cases documented in related sections
-- Cross-references between algorithms
+- How to map Infra spec types to Zig types (list, ordered map, ordered set, string, code point)
+- Complete implementation examples with numbered steps matching spec
+- Documentation patterns with Infra spec references
+- Memory management patterns for Infra primitives
+
+**For the actual spec**: Read `specs/infra.md` (see whatwg_spec skill)
+
+**This skill**: Shows HOW to implement spec concepts in idiomatic Zig
 
 ---
 
@@ -25,7 +28,7 @@ This skill contains the complete, authoritative WHATWG Infra specification - NOT
 
 ### Official Specification
 
-**URL**: https://infra.spec.whatwg.org/
+**Infra**: https://infra.spec.whatwg.org/
 
 **Purpose**: "The Infra Standard aims to define the fundamental concepts upon which standards are built."
 
@@ -33,28 +36,28 @@ This skill contains the complete, authoritative WHATWG Infra specification - NOT
 
 The Infra Standard defines:
 
-1. **§3 Algorithms** - Algorithm declaration patterns, control flow, assertions
-2. **§4 Primitive Data Types** - Nulls, booleans, numbers, bytes, strings, code points
-3. **§5 Data Structures** - Lists, ordered maps, ordered sets, stacks, queues, structs, tuples
-4. **§6 JSON** - Parsing and serialization between JSON and Infra values
-5. **§7 Forgiving Base64** - Forgiving encoding and decoding
-6. **§8 Namespaces** - HTML, MathML, SVG, XLink, XML, XMLNS namespace URIs
+1. **§1-3 Primitives** - Bytes, code points, strings
+2. **§4 Strings** - ASCII operations, whitespace, code points
+3. **§5 Data structures** - Lists, ordered maps, ordered sets, stacks, queues
+4. **§6 JavaScript** - JSON parsing and serialization
+5. **§7 Base64** - Encoding and decoding
+6. **§8 Namespaces** - HTML, SVG, MathML, XML namespace URIs
 
 ### What Infra Does NOT Define
 
-❌ **NO DOM** - No nodes, elements, documents, tree structures
-❌ **NO HTML** - No HTML-specific parsing or semantics
-❌ **NO Web APIs** - No browser interfaces or behaviors
-❌ **NO Domain Logic** - Pure primitives only
+❌ **NO domain-specific operations** - Just foundational primitives
+❌ **NO HTTP client** - Just data structures
+❌ **NO DOM implementation** - Foundation that DOM depends on
 
 ### Why Infra Matters
 
-Infra is the **foundation layer** for web specifications:
-- **DOM Standard** uses Infra lists, strings, and algorithms
-- **Fetch Standard** uses Infra maps, bytes, and JSON
-- **URL Standard** uses Infra strings, code points, and parsing algorithms
+Infra is **critical for web compatibility**:
+- **URL Standard** uses Infra for lists, maps, strings
+- **DOM Standard** uses Infra for collections and algorithms
+- **Fetch Standard** uses Infra for header maps and body streams
+- **HTML Standard** uses Infra for tokens, trees, and collections
 
-**Precision is critical**: If Infra deviates from spec, dependent specs break.
+**Precision is critical**: All web standards depend on consistent Infra behavior.
 
 ---
 
@@ -62,160 +65,88 @@ Infra is the **foundation layer** for web specifications:
 
 ### Core Principle
 
-Map Infra types to **idiomatic Zig** equivalents that preserve Infra semantics.
-
-### Primitive Types (§4)
-
-| Infra Type | Zig Type | Notes | Spec Reference |
-|------------|----------|-------|----------------|
-| `null` | `null` | Absence of value | §4.1 |
-| `boolean` | `bool` | true/false | §4.2 |
-| `8-bit unsigned integer` | `u8` | 0 to 255 | §4.3 |
-| `16-bit unsigned integer` | `u16` | 0 to 65535 | §4.3 |
-| `32-bit unsigned integer` | `u32` | 0 to 4294967295 | §4.3 |
-| `64-bit unsigned integer` | `u64` | 0 to 2^64-1 | §4.3 |
-| `8-bit signed integer` | `i8` | -128 to 127 | §4.3 |
-| `16-bit signed integer` | `i16` | -32768 to 32767 | §4.3 |
-| `32-bit signed integer` | `i32` | -2^31 to 2^31-1 | §4.3 |
-| `64-bit signed integer` | `i64` | -2^63 to 2^63-1 | §4.3 |
-| `byte` | `u8` | 0x00 to 0xFF | §4.4 |
-| `byte sequence` | `[]const u8` | Sequence of bytes | §4.5 |
-| `code point` | `u21` | U+0000 to U+10FFFF | §4.6 |
-| `string` | `[]const u8` | UTF-8 encoded | §4.7 |
-| `ASCII string` | `[]const u8` | Only ASCII code points | §4.7 |
-| `isomorphic string` | `[]const u8` | U+0000 to U+00FF | §4.7 |
-| `scalar value string` | `[]const u8` | No surrogates | §4.7 |
+Map Infra types to **idiomatic Zig** types that preserve Infra semantics and enable efficient implementation.
 
 ### Data Structures (§5)
 
-| Infra Type | Zig Type | Implementation | Spec Reference |
-|------------|----------|----------------|----------------|
-| `list` | `std.ArrayList(T)` | Standard library | §5.1 |
-| `stack` | `std.ArrayList(T)` | List with push/pop | §5.1.1 |
-| `queue` | `std.ArrayList(T)` | List with enqueue/dequeue | §5.1.2 |
-| `ordered set` | `OrderedSet(T)` | Custom (no duplicates, preserves order) | §5.1.3 |
-| `ordered map` | `OrderedMap(K, V)` | Custom (preserves insertion order) | §5.2 |
-| `struct` | `struct { ... }` | Zig struct with named fields | §5.3 |
-| `tuple` | `struct { ... }` | Zig struct (fields accessed by index) | §5.3.1 |
+| Infra Type | Zig Type | Notes | Spec Reference |
+|------------|----------|-------|----------------|
+| `list` | `std.ArrayList(T)` | Ordered, allows duplicates | §5.1 |
+| `ordered map` | `OrderedMap(K, V)` | Preserves insertion order | §5.2 |
+| `ordered set` | `OrderedSet(T)` | Unique items, preserves order | §5.3 |
+| `stack` | `std.ArrayList(T)` | LIFO with push/pop | §5.1.1 |
+| `queue` | `std.ArrayList(T)` | FIFO with enqueue/dequeue | §5.1.2 |
 
-**Important**: `ordered map` and `ordered set` require **custom implementations** because Zig's stdlib HashMap doesn't preserve insertion order.
+### Strings (§4)
+
+| Infra Type | Zig Type | Notes | Spec Reference |
+|------------|----------|-------|----------------|
+| `string` | `[]const u16` | UTF-16 code units | §4 |
+| `code point` | `u21` | Unicode U+0000 to U+10FFFF | §3 |
+| `byte` | `u8` | Single octet | §2 |
+| `byte sequence` | `[]const u8` | Sequence of bytes | §2 |
+
+### JSON Values (§6)
+
+| Infra Type | Zig Type | Implementation |
+|------------|----------|----------------|
+| `null` | `InfraValue{ .null_value = {} }` | JSON null |
+| `boolean` | `InfraValue{ .boolean = bool }` | JSON true/false |
+| `number` | `InfraValue{ .number = f64 }` | JSON number |
+| `string` | `InfraValue{ .string = []const u8 }` | JSON string (UTF-8) |
+| `array` | `InfraValue{ .list = ArrayList(InfraValue) }` | JSON array |
+| `object` | `InfraValue{ .map = OrderedMap }` | JSON object |
+
+**Implementation**:
+```zig
+pub const InfraValue = union(enum) {
+    null_value: void,
+    boolean: bool,
+    number: f64,
+    string: []const u8,
+    list: std.ArrayList(InfraValue),
+    map: OrderedMap([]const u8, InfraValue),
+    
+    pub fn deinit(self: InfraValue, allocator: Allocator) void {
+        switch (self) {
+            .string => |s| allocator.free(s),
+            .list => |*l| {
+                for (l.items) |item| item.deinit(allocator);
+                l.deinit();
+            },
+            .map => |*m| m.deinit(),
+            else => {},
+        }
+    }
+};
+```
 
 ---
 
 ## Infra Algorithm Patterns
 
-### Algorithm Declaration (§3.3)
+### List Operations (§5.1)
 
-**Infra Pattern**:
-```
-To [algorithm name], given a [type1] [parameter1], a [type2] [parameter2], …,
-perform the following steps. They return a [return type].
-```
+**Infra Spec Pattern**:
+Lists are ordered collections that can contain duplicate values.
 
 **Zig Pattern**:
 ```zig
-/// [Brief description of algorithm purpose]
+/// Append an item to a list.
 ///
-/// Implements WHATWG Infra "[algorithm name]" per §X.Y.
-///
-/// ## Spec Reference
-/// https://infra.spec.whatwg.org/#[section-anchor]
-///
-/// ## Algorithm (Infra §X.Y)
-/// [Paste complete algorithm from spec]
-///
-/// ## Parameters
-/// - `param1`: [Type and description]
-/// - `param2`: [Type and description]
-///
-/// ## Returns
-/// [Description of return value]
-pub fn algorithmName(param1: Type1, param2: Type2) ReturnType {
-    // 1. [First algorithm step from spec]
-    // 2. [Second algorithm step from spec]
-    // ...
-}
-```
-
-### Example: List Append (§5.1)
-
-**Infra Spec**:
-> To append to a list that is not an ordered set is to add the given item to the end of the list.
-
-**Zig Implementation**:
-```zig
-/// Appends an item to the end of a list.
-///
-/// Implements WHATWG Infra "append" operation per §5.1.
+/// Implements WHATWG Infra "append" per §5.1.
 ///
 /// ## Spec Reference
 /// https://infra.spec.whatwg.org/#list-append
 ///
 /// ## Algorithm (Infra §5.1)
-/// To append to a list that is not an ordered set is to add the given 
-/// item to the end of the list.
-///
-/// ## Parameters
-/// - `list`: The list to append to (mutable)
-/// - `item`: The item to append
-///
-/// ## Returns
-/// Error if allocation fails, otherwise void.
+/// To append to a list is to add the given item to the end of the list.
 pub fn append(list: *std.ArrayList(T), item: T) !void {
-    // To append to a list is to add the given item to the end of the list.
     try list.append(item);
 }
 ```
 
-### Example: Ordered Map Set (§5.2)
-
-**Infra Spec**:
-> To set the value of an entry in an ordered map to a given value is to update the value of any 
-> existing entry if the map contains an entry with the given key, or if none such exists, to add 
-> a new entry with the given key/value to the end of the map.
-
-**Zig Implementation**:
-```zig
-/// Sets the value of an entry in an ordered map.
-///
-/// Implements WHATWG Infra "set" operation per §5.2.
-///
-/// ## Spec Reference
-/// https://infra.spec.whatwg.org/#map-set
-///
-/// ## Algorithm (Infra §5.2)
-/// To set the value of an entry in an ordered map to a given value is to 
-/// update the value of any existing entry if the map contains an entry with 
-/// the given key, or if none such exists, to add a new entry with the given 
-/// key/value to the end of the map.
-///
-/// ## Parameters
-/// - `map`: The ordered map (mutable)
-/// - `key`: The key (must match key type K)
-/// - `value`: The value to set
-///
-/// ## Returns
-/// Error if allocation fails, otherwise void.
-pub fn set(map: *OrderedMap(K, V), key: K, value: V) !void {
-    // 1. If map contains key, update existing entry
-    if (map.getIndex(key)) |index| {
-        map.values.items[index] = value;
-        return;
-    }
-    
-    // 2. Otherwise, add new entry to end
-    try map.keys.append(key);
-    try map.values.append(value);
-}
-```
-
----
-
-## String Operations (§4.7)
-
-Infra defines many string operations. These are **critical** for spec compliance.
-
-### ASCII Lowercase (§4.7)
+### Example: ASCII Lowercase (§4)
 
 **Infra Spec**:
 > To ASCII lowercase a string, replace all ASCII upper alphas in the string with their corresponding code point in ASCII lower alpha.
@@ -224,18 +155,19 @@ Infra defines many string operations. These are **critical** for spec compliance
 ```zig
 /// Converts ASCII uppercase letters to lowercase.
 ///
-/// Implements WHATWG Infra "ASCII lowercase" per §4.7.
+/// Implements WHATWG Infra "ASCII lowercase" per §4.
 ///
 /// ## Spec Reference
 /// https://infra.spec.whatwg.org/#ascii-lowercase
 ///
-/// ## Algorithm (Infra §4.7)
-/// To ASCII lowercase a string, replace all ASCII upper alphas in the string 
-/// with their corresponding code point in ASCII lower alpha.
+/// ## Algorithm (Infra §4)
+/// To ASCII lowercase a string, replace all ASCII upper alphas (U+0041 A to 
+/// U+005A Z) with their corresponding code point in ASCII lower alpha 
+/// (U+0061 a to U+007A z).
 ///
 /// ## Parameters
 /// - `allocator`: Allocator for result string
-/// - `string`: Input string
+/// - `string`: Input string (UTF-8 encoded)
 ///
 /// ## Returns
 /// New string with ASCII uppercase converted to lowercase.
@@ -258,7 +190,7 @@ pub fn asciiLowercase(allocator: Allocator, string: []const u8) ![]u8 {
 }
 ```
 
-### Strip Newlines (§4.7)
+### Example: Strip Newlines (§4)
 
 **Infra Spec**:
 > To strip newlines from a string, remove any U+000A LF and U+000D CR code points from the string.
@@ -267,12 +199,12 @@ pub fn asciiLowercase(allocator: Allocator, string: []const u8) ![]u8 {
 ```zig
 /// Removes newline characters from a string.
 ///
-/// Implements WHATWG Infra "strip newlines" per §4.7.
+/// Implements WHATWG Infra "strip newlines" per §4.
 ///
 /// ## Spec Reference
 /// https://infra.spec.whatwg.org/#strip-newlines
 ///
-/// ## Algorithm (Infra §4.7)
+/// ## Algorithm (Infra §4)
 /// To strip newlines from a string, remove any U+000A LF and U+000D CR 
 /// code points from the string.
 ///
@@ -299,66 +231,86 @@ pub fn stripNewlines(allocator: Allocator, string: []const u8) ![]u8 {
 
 ---
 
-## JSON Operations (§6)
+## Ordered Map Implementation
 
-Infra defines algorithms for converting between JSON and Infra values.
+For ordered maps, we need to preserve insertion order. Two approaches:
 
-### JSON → Infra Value
+### Approach 1: Parallel Arrays (Implementation Used)
 
-**Infra defines these value types**:
-- Null → `null`
-- Boolean → `bool`
-- Number → `f64` (JavaScript numbers are IEEE 754 doubles)
-- String → `[]const u8`
-- Array → `list` of Infra values
-- Object → `ordered map` (string keys to Infra values)
-
-**Zig Representation**:
 ```zig
-pub const InfraValue = union(enum) {
-    null_value: void,
-    boolean: bool,
-    number: f64,
-    string: []const u8,
-    list: std.ArrayList(InfraValue),
-    map: OrderedMap([]const u8, InfraValue),
-    
-    pub fn deinit(self: InfraValue, allocator: Allocator) void {
-        switch (self) {
-            .string => |s| allocator.free(s),
-            .list => |*l| {
-                for (l.items) |item| {
-                    item.deinit(allocator);
-                }
-                l.deinit();
-            },
-            .map => |*m| {
-                for (m.values.items) |item| {
-                    item.deinit(allocator);
-                }
-                m.deinit();
-            },
-            else => {},
+/// Ordered map that preserves insertion order.
+///
+/// Implements WHATWG Infra "ordered map" per §5.2.
+///
+/// Uses parallel arrays to maintain insertion order. Lookups are O(n) but 
+/// iteration is cache-friendly and preserves order.
+pub fn OrderedMap(comptime K: type, comptime V: type) type {
+    return struct {
+        keys: std.ArrayList(K),
+        values: std.ArrayList(V),
+        allocator: Allocator,
+        
+        const Self = @This();
+        
+        pub fn init(allocator: Allocator) Self {
+            return .{
+                .keys = std.ArrayList(K).init(allocator),
+                .values = std.ArrayList(V).init(allocator),
+                .allocator = allocator,
+            };
         }
-    }
-};
+        
+        pub fn deinit(self: *Self) void {
+            self.keys.deinit();
+            self.values.deinit();
+        }
+        
+        /// Set value for a key, updating existing or adding new entry.
+        ///
+        /// Implements "set" operation per Infra §5.2.
+        pub fn set(self: *Self, key: K, value: V) !void {
+            // Check if key exists
+            for (self.keys.items, 0..) |k, i| {
+                if (std.mem.eql(u8, k, key)) {
+                    self.values.items[i] = value;
+                    return;
+                }
+            }
+            
+            // Add new entry
+            try self.keys.append(key);
+            try self.values.append(value);
+        }
+        
+        /// Get value for a key.
+        ///
+        /// Returns null if key not found.
+        pub fn get(self: Self, key: K) ?V {
+            for (self.keys.items, 0..) |k, i| {
+                if (std.mem.eql(u8, k, key)) {
+                    return self.values.items[i];
+                }
+            }
+            return null;
+        }
+    };
+}
 ```
 
-### Parse JSON String to Infra Value (§6)
+---
 
-**Zig Implementation** (simplified - actual would use Zig's JSON parser):
+## JSON Operations (§6)
+
+### Parse JSON String to Infra Value
+
+**Zig Implementation**:
 ```zig
 /// Parses a JSON string into an Infra value.
 ///
 /// Implements WHATWG Infra "parse JSON string to Infra value" per §6.
 ///
 /// ## Spec Reference
-/// https://infra.spec.whatwg.org/#parse-a-json-string-to-an-infra-value
-///
-/// ## Algorithm (Infra §6)
-/// 1. Let jsValue be ? Call(%JSON.parse%, undefined, « string »).
-/// 2. Return the result of converting a JSON-derived JavaScript value to 
-///    an Infra value, given jsValue.
+/// https://infra.spec.whatwg.org/#parse-json-string-to-infra-value
 ///
 /// ## Parameters
 /// - `allocator`: Allocator for Infra value
@@ -370,7 +322,6 @@ pub fn parseJsonStringToInfraValue(
     allocator: Allocator,
     json_string: []const u8,
 ) !InfraValue {
-    // Use Zig's std.json parser
     const parsed = try std.json.parseFromSlice(
         std.json.Value,
         allocator,
@@ -391,10 +342,6 @@ fn convertJsonValueToInfraValue(
         .bool => |b| return .{ .boolean = b },
         .integer => |i| return .{ .number = @floatFromInt(i) },
         .float => |f| return .{ .number = f },
-        .number_string => |s| {
-            const f = try std.fmt.parseFloat(f64, s);
-            return .{ .number = f };
-        },
         .string => |s| {
             const copy = try allocator.dupe(u8, s);
             return .{ .string = copy };
@@ -402,9 +349,7 @@ fn convertJsonValueToInfraValue(
         .array => |arr| {
             var list = std.ArrayList(InfraValue).init(allocator);
             errdefer {
-                for (list.items) |item| {
-                    item.deinit(allocator);
-                }
+                for (list.items) |item| item.deinit(allocator);
                 list.deinit();
             }
             
@@ -418,9 +363,7 @@ fn convertJsonValueToInfraValue(
         .object => |obj| {
             var map = OrderedMap([]const u8, InfraValue).init(allocator);
             errdefer {
-                for (map.values.items) |item| {
-                    item.deinit(allocator);
-                }
+                for (map.values.items) |item| item.deinit(allocator);
                 map.deinit();
             }
             
@@ -433,6 +376,7 @@ fn convertJsonValueToInfraValue(
             
             return .{ .map = map };
         },
+        else => return error.InvalidJson,
     }
 }
 ```
@@ -441,19 +385,16 @@ fn convertJsonValueToInfraValue(
 
 ## Base64 Operations (§7)
 
-### Forgiving Base64 Decode (§7)
+### Forgiving Base64 Decode
 
 **Infra Spec** (simplified):
 > 1. Remove all ASCII whitespace from data.
-> 2. If data's code point length divides by 4 leaving no remainder:
->    - If data ends with one or two U+003D (=) code points, remove them.
+> 2. If data's code point length divides by 4 leaving no remainder, remove trailing '=' characters.
 > 3. If data's code point length divides by 4 leaving a remainder of 1, return failure.
-> 4. If data contains a code point that is not one of:
->    - U+002B (+), U+002F (/), ASCII alphanumeric
->    then return failure.
-> 5. [Decode using base64 alphabet]
+> 4. Validate character set.
+> 5. Decode using base64 alphabet.
 
-**Zig Implementation** (simplified):
+**Zig Implementation**:
 ```zig
 /// Decodes a base64 string with forgiving error handling.
 ///
@@ -501,37 +442,14 @@ pub fn forgivingBase64Decode(
         }
     }
     
-    // 5. Decode using standard base64 (use std.base64)
+    // 5. Decode using standard base64
     const decoder = std.base64.standard.Decoder;
     const max_size = try decoder.calcSizeForSlice(working);
     const output = try allocator.alloc(u8, max_size);
     errdefer allocator.free(output);
     
     const decoded_len = try decoder.decode(output, working);
-    return allocator.realloc(output, decoded_len);
-}
-
-fn isBase64Char(byte: u8) bool {
-    return (byte >= 'A' and byte <= 'Z') or
-           (byte >= 'a' and byte <= 'z') or
-           (byte >= '0' and byte <= '9') or
-           byte == '+' or
-           byte == '/';
-}
-
-fn removeAsciiWhitespace(allocator: Allocator, string: []const u8) ![]u8 {
-    var result = std.ArrayList(u8).init(allocator);
-    errdefer result.deinit();
-    
-    for (string) |byte| {
-        // ASCII whitespace: U+0009 TAB, U+000A LF, U+000C FF, U+000D CR, U+0020 SPACE
-        if (byte != '\t' and byte != '\n' and byte != '\x0C' and 
-            byte != '\r' and byte != ' ') {
-            try result.append(byte);
-        }
-    }
-    
-    return result.toOwnedSlice();
+    return try allocator.realloc(output, decoded_len);
 }
 ```
 
@@ -541,10 +459,7 @@ fn removeAsciiWhitespace(allocator: Allocator, string: []const u8) ![]u8 {
 
 ### Step 1: Read Complete Infra Section
 
-**NEVER use grep**. Open the full spec:
-- https://infra.spec.whatwg.org/
-
-Find your section (e.g., §5.1 Lists) and read:
+**NEVER use grep**. Load complete section from `specs/infra.md`:
 1. **Section introduction** - Understand context and purpose
 2. **ALL algorithm steps** - Don't skip any steps
 3. **Related algorithms** - Cross-references matter
@@ -577,9 +492,9 @@ pub fn algorithmName(...) !ReturnType {
 
 **Required documentation**:
 1. Brief description
-2. "Implements WHATWG Infra [algorithm] per §X.Y"
+2. "Implements WHATWG Infra [algorithm] per §X"
 3. Spec reference URL
-4. Complete algorithm (paste from spec)
+4. Complete algorithm (paste from spec or summarize)
 5. Parameter descriptions
 6. Return value description
 
@@ -611,18 +526,7 @@ Before marking any implementation complete:
 
 ## Common Mistakes to Avoid
 
-### ❌ Mistake 1: Using Grep
-
-```bash
-# WRONG
-rg "ASCII lowercase" /path/to/spec
-
-# RIGHT
-# Open https://infra.spec.whatwg.org/#ascii-lowercase
-# Read complete section with context
-```
-
-### ❌ Mistake 2: Wrong Type Mapping
+### ❌ Mistake 1: Wrong Type Mapping
 
 ```zig
 // WRONG: Using HashMap for ordered map (doesn't preserve order!)
@@ -636,12 +540,11 @@ pub const OrderedMap = struct {
 };
 ```
 
-### ❌ Mistake 3: Incomplete Algorithm
+### ❌ Mistake 2: Incomplete Algorithm
 
 ```zig
-// WRONG: Only implementing first step
+// WRONG: Only removing \n, not \r
 pub fn stripNewlines(allocator: Allocator, string: []const u8) ![]u8 {
-    // Oops, only removes \n, not \r!
     var result = std.ArrayList(u8).init(allocator);
     for (string) |byte| {
         if (byte != '\n') try result.append(byte);
@@ -662,30 +565,6 @@ pub fn stripNewlines(allocator: Allocator, string: []const u8) ![]u8 {
 }
 ```
 
-### ❌ Mistake 4: Missing Documentation
-
-```zig
-// WRONG: No spec reference
-pub fn append(list: *ArrayList(T), item: T) !void {
-    try list.append(item);
-}
-
-// RIGHT: Complete documentation
-/// Appends an item to a list.
-///
-/// Implements WHATWG Infra "append" per §5.1.
-///
-/// ## Spec Reference
-/// https://infra.spec.whatwg.org/#list-append
-///
-/// ## Algorithm (Infra §5.1)
-/// To append to a list that is not an ordered set is to add the given 
-/// item to the end of the list.
-pub fn append(list: *ArrayList(T), item: T) !void {
-    try list.append(item);
-}
-```
-
 ---
 
 ## Best Practices
@@ -693,9 +572,8 @@ pub fn append(list: *ArrayList(T), item: T) !void {
 1. **Read complete sections** - Context prevents bugs
 2. **Number comments match spec steps** - Makes verification easy
 3. **Paste algorithm into docs** - Ensures you don't miss steps
-4. **Test with spec examples** - If spec has examples, test them
-5. **Check cross-references** - Spec often references related algorithms
-6. **Use exact terminology** - If spec says "ordered map", don't call it "map"
+4. **Check cross-references** - Spec often references related algorithms
+5. **Use exact terminology** - If spec says "list", call it list, not array
 
 ---
 
@@ -713,31 +591,16 @@ Load all relevant skills together for complete implementation guidance.
 
 ## Quick Reference
 
-### Finding Algorithms in Spec
-
-```
-https://infra.spec.whatwg.org/
-
-§3 Algorithms        - How to write algorithms
-§4 Primitive types   - Nulls, booleans, numbers, bytes, strings
-§5 Data structures   - Lists, maps, sets, stacks, queues, structs
-§6 JSON              - JSON ↔ Infra value conversion
-§7 Base64            - Forgiving base64 encoding/decoding
-§8 Namespaces        - Namespace URI constants
-```
-
 ### Type Mapping Quick Lookup
 
 ```
-list            → ArrayList(T)
-ordered map     → OrderedMap(K, V)      (custom!)
-ordered set     → OrderedSet(T)         (custom!)
-string          → []const u8
-byte sequence   → []const u8
-boolean         → bool
-null            → null
+list            → std.ArrayList(T)
+ordered map     → OrderedMap(K, V) (custom, preserves order)
+ordered set     → OrderedSet(T) (custom, preserves order)
+string          → []const u16 (UTF-16)
 code point      → u21
 byte            → u8
+byte sequence   → []const u8
 ```
 
 ### Algorithm Template
@@ -745,13 +608,13 @@ byte            → u8
 ```zig
 /// [Brief description]
 ///
-/// Implements WHATWG Infra "[name]" per §X.Y.
+/// Implements WHATWG Infra "[name]" per §X.
 ///
 /// ## Spec Reference
 /// https://infra.spec.whatwg.org/#[anchor]
 ///
-/// ## Algorithm (Infra §X.Y)
-/// [Paste complete algorithm]
+/// ## Algorithm (Infra §X)
+/// [Paste complete algorithm or summarize steps]
 ///
 /// ## Parameters
 /// - `param`: Description
@@ -767,4 +630,4 @@ pub fn name(param: Type) !ReturnType {
 
 ---
 
-**Remember**: Infra is the foundation. Precision matters. Other specs depend on it being correct.
+**Remember**: Infra is the foundation for all WHATWG specs. Precision is critical because bugs cascade to every dependent specification.
