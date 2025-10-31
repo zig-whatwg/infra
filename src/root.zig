@@ -21,6 +21,7 @@ pub const tuple = @import("tuple.zig");
 pub const json = @import("json.zig");
 pub const base64 = @import("base64.zig");
 pub const namespaces = @import("namespaces.zig");
+pub const time = @import("time.zig");
 
 pub const String = string.String;
 pub const CodePoint = code_point.CodePoint;
@@ -32,6 +33,24 @@ pub const Stack = stack.Stack;
 pub const Queue = queue.Queue;
 pub const InfraValue = json.InfraValue;
 pub const InfraError = string.InfraError;
+pub const Moment = time.Moment;
+pub const Duration = time.Duration;
+
+// Numeric type aliases for clarity
+// WHATWG Infra Standard §4.3
+pub const U8 = u8;
+pub const U16 = u16;
+pub const U32 = u32;
+pub const U64 = u64;
+pub const U128 = u128;
+pub const I8 = i8;
+pub const I16 = i16;
+pub const I32 = i32;
+pub const I64 = i64;
+
+/// An IPv6 address is a 128-bit unsigned integer.
+/// WHATWG Infra Standard §4.3
+pub const IPv6Address = u128;
 
 test {
     std.testing.refAllDecls(@This());

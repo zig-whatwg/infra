@@ -58,7 +58,7 @@ pub fn utf8ToUtf16(allocator: Allocator, utf8: []const u8) !String {
     return utf8ToUtf16Unicode(allocator, utf8);
 }
 
-inline fn isAscii(bytes: []const u8) bool {
+pub inline fn isAscii(bytes: []const u8) bool {
     if (bytes.len >= 16) {
         return isAsciiSimd(bytes);
     }
@@ -168,6 +168,8 @@ pub fn utf16ToUtf8(allocator: Allocator, utf16: String) ![]const u8 {
     return result.toOwnedSlice(allocator);
 }
 
+/// ASCII lowercase a string.
+/// WHATWG Infra Standard §4.6 line 697
 pub fn asciiLowercase(allocator: Allocator, string: String) !String {
     if (string.len == 0) {
         return &[_]u16{};
@@ -183,6 +185,8 @@ pub fn asciiLowercase(allocator: Allocator, string: String) !String {
     return result;
 }
 
+/// ASCII uppercase a string.
+/// WHATWG Infra Standard §4.6 line 699
 pub fn asciiUppercase(allocator: Allocator, string: String) !String {
     if (string.len == 0) {
         return &[_]u16{};
@@ -205,6 +209,64 @@ pub inline fn isAsciiString(string: String) bool {
     return true;
 }
 
+/// An isomorphic string is a string whose code points are all in the range
+/// U+0000 NULL to U+00FF (ÿ), inclusive.
+/// WHATWG Infra Standard §4.6 line 571
+pub inline fn isIsomorphicString(string: String) bool {
+    for (string) |c| {
+        if (c > 0xFF) return false;
+    }
+    return true;
+}
+
+/// A scalar value string is a string whose code points are all scalar values
+/// (no surrogates).
+/// WHATWG Infra Standard §4.6 line 573
+pub inline fn isScalarValueString(string: String) bool {
+    const code_point = @import("code_point.zig");
+    for (string) |c| {
+        if (code_point.isSurrogate(c)) return false;
+    }
+    return true;
+}
+
+/// Check if two strings are identical (code unit sequence comparison).
+/// WHATWG Infra Standard §4.6 lines 585-587
+///
+/// A string a **is** or is **identical to** a string b if it consists of
+/// the same sequence of code units.
+///
+/// Note: Except where otherwise stated, all string comparisons use is.
+/// This type of comparison is case-sensitive, normalization-sensitive,
+/// and order-sensitive for combining marks.
+pub fn is(a: String, b: String) bool {
+    if (a.len != b.len) return false;
+
+    for (a, b) |code_unit_a, code_unit_b| {
+        if (code_unit_a != code_unit_b) return false;
+    }
+
+    return true;
+}
+
+/// Alias for is() - check if two strings are identical.
+/// WHATWG Infra Standard §4.6 lines 585-587
+pub const isIdenticalTo = is;
+
+/// Alias for is() - common name for string equality
+pub const eql = is;
+
+/// Find the first occurrence of a code unit in a string.
+/// Returns the index if found, null otherwise.
+pub fn indexOf(haystack: String, needle: u16) ?usize {
+    for (haystack, 0..) |code_unit, i| {
+        if (code_unit == needle) return i;
+    }
+    return null;
+}
+
+/// Check if two strings are an ASCII case-insensitive match.
+/// WHATWG Infra Standard §4.6 line 701
 pub fn isAsciiCaseInsensitiveMatch(a: String, b: String) bool {
     if (a.len != b.len) return false;
 
@@ -228,6 +290,8 @@ pub inline fn isAsciiWhitespace(c: u16) bool {
     return c == 0x0009 or c == 0x000A or c == 0x000C or c == 0x000D or c == 0x0020;
 }
 
+/// Strip leading and trailing ASCII whitespace from a string.
+/// WHATWG Infra Standard §4.6 line 719
 pub fn stripLeadingAndTrailingAsciiWhitespace(allocator: Allocator, string: String) !String {
     if (string.len == 0) {
         return &[_]u16{};
@@ -294,11 +358,14 @@ pub fn normalizeNewlines(allocator: Allocator, string: String) !String {
     return result.toOwnedSlice(allocator);
 }
 
-pub fn splitOnAsciiWhitespace(allocator: Allocator, string: String) ![]String {
-    if (string.len == 0) {
+/// Split a string on ASCII whitespace.
+/// WHATWG Infra Standard §4.6 line 763-779
+pub fn splitOnAsciiWhitespace(allocator: Allocator, input: String) ![]String {
+    if (input.len == 0) {
         return &[_]String{};
     }
 
+    var position: usize = 0;
     var tokens = try std.ArrayList(String).initCapacity(allocator, 0);
     errdefer {
         for (tokens.items) |token| {
@@ -307,36 +374,29 @@ pub fn splitOnAsciiWhitespace(allocator: Allocator, string: String) ![]String {
         tokens.deinit(allocator);
     }
 
-    var start: ?usize = null;
-    for (string, 0..) |c, i| {
-        if (isAsciiWhitespace(c)) {
-            if (start) |s| {
-                const token = try allocator.alloc(u16, i - s);
-                @memcpy(token, string[s..i]);
-                try tokens.append(allocator, token);
-                start = null;
-            }
-        } else {
-            if (start == null) {
-                start = i;
-            }
-        }
-    }
+    skipAsciiWhitespace(input, &position);
 
-    if (start) |s| {
-        const token = try allocator.alloc(u16, string.len - s);
-        @memcpy(token, string[s..]);
+    while (position < input.len) {
+        const token = try collectSequence(allocator, input, &position, struct {
+            fn notWhitespace(c: u16) bool {
+                return !isAsciiWhitespace(c);
+            }
+        }.notWhitespace);
         try tokens.append(allocator, token);
+        skipAsciiWhitespace(input, &position);
     }
 
     return tokens.toOwnedSlice(allocator);
 }
 
-pub fn splitOnCommas(allocator: Allocator, string: String) ![]String {
-    if (string.len == 0) {
+/// Split a string on commas.
+/// WHATWG Infra Standard §4.6 line 781-803
+pub fn splitOnCommas(allocator: Allocator, input: String) ![]String {
+    if (input.len == 0) {
         return &[_]String{};
     }
 
+    var position: usize = 0;
     var tokens = try std.ArrayList(String).initCapacity(allocator, 0);
     errdefer {
         for (tokens.items) |token| {
@@ -345,25 +405,298 @@ pub fn splitOnCommas(allocator: Allocator, string: String) ![]String {
         tokens.deinit(allocator);
     }
 
-    var start: usize = 0;
-    for (string, 0..) |c, i| {
-        if (c == ',') {
-            const stripped = try stripLeadingAndTrailingAsciiWhitespace(allocator, string[start..i]);
-            try tokens.append(allocator, stripped);
-            start = i + 1;
+    while (position < input.len) {
+        const token = try collectSequence(allocator, input, &position, struct {
+            fn notComma(c: u16) bool {
+                return c != ',';
+            }
+        }.notComma);
+        const stripped = try stripLeadingAndTrailingAsciiWhitespace(allocator, token);
+        allocator.free(token);
+        try tokens.append(allocator, stripped);
+
+        if (position < input.len) {
+            position += 1;
         }
     }
-
-    const last = try stripLeadingAndTrailingAsciiWhitespace(allocator, string[start..]);
-    try tokens.append(allocator, last);
 
     return tokens.toOwnedSlice(allocator);
 }
 
-pub fn concatenate(allocator: Allocator, strings: []const String) !String {
+/// Collect a sequence of code points meeting a condition.
+/// WHATWG Infra Standard §4.6 line 723-737
+pub fn collectSequence(allocator: Allocator, input: String, position: *usize, condition: fn (u16) bool) !String {
+    var result = try std.ArrayList(u16).initCapacity(allocator, 0);
+    errdefer result.deinit(allocator);
+
+    while (position.* < input.len and condition(input[position.*])) {
+        try result.append(allocator, input[position.*]);
+        position.* += 1;
+    }
+
+    return result.toOwnedSlice(allocator);
+}
+
+pub fn skipAsciiWhitespace(input: String, position: *usize) void {
+    while (position.* < input.len and isAsciiWhitespace(input[position.*])) {
+        position.* += 1;
+    }
+}
+
+/// Strictly split a string on a delimiter code point.
+/// WHATWG Infra Standard §4.6 line 739-759
+pub fn strictlySplit(allocator: Allocator, input: String, delimiter: u16) ![]String {
+    const NotDelimiter = struct {
+        delim: u16,
+        fn check(self: @This(), c: u16) bool {
+            return c != self.delim;
+        }
+    };
+
+    var position: usize = 0;
+    var tokens = try std.ArrayList(String).initCapacity(allocator, 0);
+    errdefer {
+        for (tokens.items) |token| {
+            allocator.free(token);
+        }
+        tokens.deinit(allocator);
+    }
+
+    const checker = NotDelimiter{ .delim = delimiter };
+    var result = try std.ArrayList(u16).initCapacity(allocator, 0);
+    errdefer result.deinit(allocator);
+
+    while (position < input.len and checker.check(input[position])) {
+        try result.append(allocator, input[position]);
+        position += 1;
+    }
+    try tokens.append(allocator, try result.toOwnedSlice(allocator));
+
+    while (position < input.len) {
+        position += 1;
+        var token_result = try std.ArrayList(u16).initCapacity(allocator, 0);
+        errdefer token_result.deinit(allocator);
+
+        while (position < input.len and checker.check(input[position])) {
+            try token_result.append(allocator, input[position]);
+            position += 1;
+        }
+        try tokens.append(allocator, try token_result.toOwnedSlice(allocator));
+    }
+
+    return tokens.toOwnedSlice(allocator);
+}
+
+pub fn codePointSubstring(allocator: Allocator, string: String, start: usize, length: usize) !String {
+    var result = try std.ArrayList(u16).initCapacity(allocator, length * 2);
+    errdefer result.deinit(allocator);
+
+    var code_point_index: usize = 0;
+    var i: usize = 0;
+
+    while (i < string.len and code_point_index < start) {
+        const c = string[i];
+        if (c >= 0xD800 and c <= 0xDBFF and i + 1 < string.len) {
+            const low = string[i + 1];
+            if (low >= 0xDC00 and low <= 0xDFFF) {
+                i += 2;
+                code_point_index += 1;
+                continue;
+            }
+        }
+        i += 1;
+        code_point_index += 1;
+    }
+
+    var collected: usize = 0;
+    while (i < string.len and collected < length) {
+        const c = string[i];
+        if (c >= 0xD800 and c <= 0xDBFF and i + 1 < string.len) {
+            const low = string[i + 1];
+            if (low >= 0xDC00 and low <= 0xDFFF) {
+                try result.append(allocator, c);
+                try result.append(allocator, low);
+                i += 2;
+                collected += 1;
+                continue;
+            }
+        }
+        try result.append(allocator, c);
+        i += 1;
+        collected += 1;
+    }
+
+    return result.toOwnedSlice(allocator);
+}
+
+pub fn codePointSubstringByPositions(allocator: Allocator, string: String, start: usize, end: usize) !String {
+    return codePointSubstring(allocator, string, start, end - start);
+}
+
+pub fn codePointSubstringToEnd(allocator: Allocator, string: String, start: usize) !String {
+    var code_point_length: usize = 0;
+    var i: usize = 0;
+    while (i < string.len) {
+        const c = string[i];
+        if (c >= 0xD800 and c <= 0xDBFF and i + 1 < string.len) {
+            const low = string[i + 1];
+            if (low >= 0xDC00 and low <= 0xDFFF) {
+                i += 2;
+                code_point_length += 1;
+                continue;
+            }
+        }
+        i += 1;
+        code_point_length += 1;
+    }
+
+    return codePointSubstring(allocator, string, start, code_point_length - start);
+}
+
+/// Check if a string is a code unit prefix of another string.
+/// WHATWG Infra Standard §4.6 line 591-608
+pub fn isCodeUnitPrefix(potentialPrefix: String, input: String) bool {
+    if (potentialPrefix.len > input.len) return false;
+
+    var i: usize = 0;
+    while (i < potentialPrefix.len) {
+        if (potentialPrefix[i] != input[i]) return false;
+        i += 1;
+    }
+
+    return true;
+}
+
+/// Check if a string is a code unit suffix of another string.
+/// WHATWG Infra Standard §4.6 line 613-633
+pub fn isCodeUnitSuffix(potentialSuffix: String, input: String) bool {
+    if (potentialSuffix.len > input.len) return false;
+
+    var i: usize = 1;
+    while (i <= potentialSuffix.len) : (i += 1) {
+        const suffix_idx = potentialSuffix.len - i;
+        const input_idx = input.len - i;
+        if (potentialSuffix[suffix_idx] != input[input_idx]) return false;
+    }
+
+    return true;
+}
+
+/// Check if one string is code unit less than another.
+/// WHATWG Infra Standard §4.6 line 639-649
+pub fn codeUnitLessThan(a: String, b: String) bool {
+    if (isCodeUnitPrefix(b, a)) return false;
+    if (isCodeUnitPrefix(a, b)) return true;
+
+    const min_len = @min(a.len, b.len);
+    for (0..min_len) |i| {
+        if (a[i] < b[i]) return true;
+        if (a[i] > b[i]) return false;
+    }
+
+    return a.len < b.len;
+}
+
+pub fn codeUnitSubstring(string: String, start: usize, length: usize) String {
+    const end = @min(start + length, string.len);
+    return string[start..end];
+}
+
+pub fn codeUnitSubstringByPositions(string: String, start: usize, end: usize) String {
+    return string[start..@min(end, string.len)];
+}
+
+pub fn codeUnitSubstringToEnd(string: String, start: usize) String {
+    return string[start..];
+}
+
+/// Convert a string into a scalar value string.
+/// WHATWG Infra Standard §4.6 line 577-581
+pub fn convertToScalarValueString(allocator: Allocator, string: String) !String {
+    if (string.len == 0) {
+        return &[_]u16{};
+    }
+
+    var result = try std.ArrayList(u16).initCapacity(allocator, string.len);
+    errdefer result.deinit(allocator);
+
+    var i: usize = 0;
+    while (i < string.len) {
+        const c = string[i];
+
+        if (c >= 0xD800 and c <= 0xDBFF and i + 1 < string.len) {
+            const low = string[i + 1];
+            if (low >= 0xDC00 and low <= 0xDFFF) {
+                try result.append(allocator, c);
+                try result.append(allocator, low);
+                i += 2;
+                continue;
+            }
+        }
+
+        if (c >= 0xD800 and c <= 0xDFFF) {
+            try result.append(allocator, 0xFFFD);
+        } else {
+            try result.append(allocator, c);
+        }
+
+        i += 1;
+    }
+
+    return result.toOwnedSlice(allocator);
+}
+
+/// Strip and collapse ASCII whitespace in a string.
+/// WHATWG Infra Standard §4.6 line 721
+pub fn stripAndCollapseAsciiWhitespace(allocator: Allocator, string: String) !String {
+    if (string.len == 0) {
+        return &[_]u16{};
+    }
+
+    var result = try std.ArrayList(u16).initCapacity(allocator, string.len);
+    errdefer result.deinit(allocator);
+
+    var in_whitespace = false;
+    for (string) |c| {
+        if (isAsciiWhitespace(c)) {
+            in_whitespace = true;
+        } else {
+            if (in_whitespace and result.items.len > 0) {
+                try result.append(allocator, 0x0020);
+            }
+            try result.append(allocator, c);
+            in_whitespace = false;
+        }
+    }
+
+    return result.toOwnedSlice(allocator);
+}
+
+pub fn asciiEncode(allocator: Allocator, string: String) ![]const u8 {
+    const bytes_module = @import("bytes.zig");
+    return bytes_module.isomorphicEncode(allocator, string);
+}
+
+pub fn asciiDecode(allocator: Allocator, bytes: []const u8) !String {
+    const bytes_module = @import("bytes.zig");
+    return bytes_module.isomorphicDecode(allocator, bytes);
+}
+
+/// Concatenate a list of strings with an optional separator.
+/// WHATWG Infra Standard §4.6 line 805-812
+pub fn concatenate(allocator: Allocator, strings: []const String, separator: ?String) !String {
+    if (strings.len == 0) {
+        return &[_]u16{};
+    }
+
+    const sep = separator orelse &[_]u16{};
+
     var total_len: usize = 0;
     for (strings) |s| {
         total_len += s.len;
+    }
+    if (strings.len > 1) {
+        total_len += sep.len * (strings.len - 1);
     }
 
     if (total_len == 0) {
@@ -372,7 +705,11 @@ pub fn concatenate(allocator: Allocator, strings: []const String) !String {
 
     const result = try allocator.alloc(u16, total_len);
     var pos: usize = 0;
-    for (strings) |s| {
+    for (strings, 0..) |s, idx| {
+        if (idx > 0 and sep.len > 0) {
+            @memcpy(result[pos .. pos + sep.len], sep);
+            pos += sep.len;
+        }
         @memcpy(result[pos .. pos + s.len], s);
         pos += s.len;
     }
@@ -582,6 +919,94 @@ test "isAsciiString - contains Unicode" {
 test "isAsciiString - empty string" {
     const input = [_]u16{};
     try std.testing.expect(isAsciiString(&input));
+}
+
+test "isIsomorphicString - pure ASCII" {
+    const input = [_]u16{ 'h', 'e', 'l', 'l', 'o' };
+    try std.testing.expect(isIsomorphicString(&input));
+}
+
+test "isIsomorphicString - Latin-1 range" {
+    const input = [_]u16{ 'h', 0x00E9, 0x00FF, 'o' };
+    try std.testing.expect(isIsomorphicString(&input));
+}
+
+test "isIsomorphicString - exceeds Latin-1" {
+    const input = [_]u16{ 'h', 0x0100, 'o' };
+    try std.testing.expect(!isIsomorphicString(&input));
+}
+
+test "isIsomorphicString - empty string" {
+    const input = [_]u16{};
+    try std.testing.expect(isIsomorphicString(&input));
+}
+
+test "isScalarValueString - no surrogates" {
+    const input = [_]u16{ 'h', 'e', 'l', 'l', 'o' };
+    try std.testing.expect(isScalarValueString(&input));
+}
+
+test "isScalarValueString - contains lead surrogate" {
+    const input = [_]u16{ 'h', 0xD800, 'o' };
+    try std.testing.expect(!isScalarValueString(&input));
+}
+
+test "isScalarValueString - contains trail surrogate" {
+    const input = [_]u16{ 'h', 0xDC00, 'o' };
+    try std.testing.expect(!isScalarValueString(&input));
+}
+
+test "isScalarValueString - empty string" {
+    const input = [_]u16{};
+    try std.testing.expect(isScalarValueString(&input));
+}
+
+test "is - identical strings" {
+    const a = [_]u16{ 'h', 'e', 'l', 'l', 'o' };
+    const b = [_]u16{ 'h', 'e', 'l', 'l', 'o' };
+    try std.testing.expect(is(&a, &b));
+}
+
+test "is - different strings" {
+    const a = [_]u16{ 'h', 'e', 'l', 'l', 'o' };
+    const b = [_]u16{ 'w', 'o', 'r', 'l', 'd' };
+    try std.testing.expect(!is(&a, &b));
+}
+
+test "is - case sensitive" {
+    const a = [_]u16{ 'H', 'E', 'L', 'L', 'O' };
+    const b = [_]u16{ 'h', 'e', 'l', 'l', 'o' };
+    try std.testing.expect(!is(&a, &b));
+}
+
+test "is - different lengths" {
+    const a = [_]u16{ 'h', 'e', 'l', 'l', 'o' };
+    const b = [_]u16{ 'h', 'e', 'l', 'l' };
+    try std.testing.expect(!is(&a, &b));
+}
+
+test "is - empty strings" {
+    const a = [_]u16{};
+    const b = [_]u16{};
+    try std.testing.expect(is(&a, &b));
+}
+
+test "is - Unicode strings" {
+    const a = [_]u16{ 0xD83D, 0xDCA9, 'a' };
+    const b = [_]u16{ 0xD83D, 0xDCA9, 'a' };
+    try std.testing.expect(is(&a, &b));
+}
+
+test "is - normalization sensitive" {
+    const a = [_]u16{0x00E9};
+    const b = [_]u16{ 'e', 0x0301 };
+    try std.testing.expect(!is(&a, &b));
+}
+
+test "isIdenticalTo - alias works" {
+    const a = [_]u16{ 'h', 'e', 'l', 'l', 'o' };
+    const b = [_]u16{ 'h', 'e', 'l', 'l', 'o' };
+    try std.testing.expect(isIdenticalTo(&a, &b));
 }
 
 test "isAsciiCaseInsensitiveMatch - match same case" {
@@ -879,7 +1304,7 @@ test "concatenate - multiple strings" {
     const str3 = [_]u16{ 'w', 'o', 'r', 'l', 'd' };
 
     const strings = [_]String{ &str1, &str2, &str3 };
-    const result = try concatenate(allocator, &strings);
+    const result = try concatenate(allocator, &strings, null);
     defer allocator.free(result);
 
     const expected = [_]u16{ 'h', 'e', 'l', 'l', 'o', ' ', 'w', 'o', 'r', 'l', 'd' };
@@ -889,8 +1314,256 @@ test "concatenate - multiple strings" {
 test "concatenate - empty list" {
     const allocator = std.testing.allocator;
     const strings = [_]String{};
-    const result = try concatenate(allocator, &strings);
+    const result = try concatenate(allocator, &strings, null);
     defer allocator.free(result);
 
     try std.testing.expectEqual(@as(usize, 0), result.len);
+}
+
+test "concatenate - with separator" {
+    const allocator = std.testing.allocator;
+
+    const str1 = [_]u16{ 'a', 'b' };
+    const str2 = [_]u16{ 'c', 'd' };
+    const sep = [_]u16{'-'};
+
+    const strings = [_]String{ &str1, &str2 };
+    const result = try concatenate(allocator, &strings, &sep);
+    defer allocator.free(result);
+
+    const expected = [_]u16{ 'a', 'b', '-', 'c', 'd' };
+    try std.testing.expectEqualSlices(u16, &expected, result);
+}
+
+test "collectSequence - basic" {
+    const allocator = std.testing.allocator;
+    const input = [_]u16{ 'a', 'b', 'c', ' ', 'd', 'e' };
+    var position: usize = 0;
+
+    const result = try collectSequence(allocator, &input, &position, struct {
+        fn notSpace(c: u16) bool {
+            return c != ' ';
+        }
+    }.notSpace);
+    defer allocator.free(result);
+
+    const expected = [_]u16{ 'a', 'b', 'c' };
+    try std.testing.expectEqualSlices(u16, &expected, result);
+    try std.testing.expectEqual(@as(usize, 3), position);
+}
+
+test "skipAsciiWhitespace - basic" {
+    const input = [_]u16{ ' ', '\t', '\n', 'a', 'b' };
+    var position: usize = 0;
+
+    skipAsciiWhitespace(&input, &position);
+
+    try std.testing.expectEqual(@as(usize, 3), position);
+}
+
+test "strictlySplit - basic" {
+    const allocator = std.testing.allocator;
+    const input = [_]u16{ 'a', ',', 'b', ',', 'c' };
+    const result = try strictlySplit(allocator, &input, ',');
+    defer {
+        for (result) |token| {
+            allocator.free(token);
+        }
+        allocator.free(result);
+    }
+
+    try std.testing.expectEqual(@as(usize, 3), result.len);
+
+    const expected1 = [_]u16{'a'};
+    try std.testing.expectEqualSlices(u16, &expected1, result[0]);
+
+    const expected2 = [_]u16{'b'};
+    try std.testing.expectEqualSlices(u16, &expected2, result[1]);
+
+    const expected3 = [_]u16{'c'};
+    try std.testing.expectEqualSlices(u16, &expected3, result[2]);
+}
+
+test "strictlySplit - empty tokens" {
+    const allocator = std.testing.allocator;
+    const input = [_]u16{ 'a', ',', ',', 'b' };
+    const result = try strictlySplit(allocator, &input, ',');
+    defer {
+        for (result) |token| {
+            allocator.free(token);
+        }
+        allocator.free(result);
+    }
+
+    try std.testing.expectEqual(@as(usize, 3), result.len);
+    try std.testing.expectEqual(@as(usize, 1), result[0].len);
+    try std.testing.expectEqual(@as(usize, 0), result[1].len);
+    try std.testing.expectEqual(@as(usize, 1), result[2].len);
+}
+
+test "codePointSubstring - ASCII only" {
+    const allocator = std.testing.allocator;
+    const input = [_]u16{ 'h', 'e', 'l', 'l', 'o' };
+    const result = try codePointSubstring(allocator, &input, 1, 3);
+    defer allocator.free(result);
+
+    const expected = [_]u16{ 'e', 'l', 'l' };
+    try std.testing.expectEqualSlices(u16, &expected, result);
+}
+
+test "codePointSubstring - with surrogate pairs" {
+    const allocator = std.testing.allocator;
+    const input = [_]u16{ 0xD83D, 0xDCA9, 'a', 0xD83D, 0xDE00 };
+    const result = try codePointSubstring(allocator, &input, 0, 2);
+    defer allocator.free(result);
+
+    const expected = [_]u16{ 0xD83D, 0xDCA9, 'a' };
+    try std.testing.expectEqualSlices(u16, &expected, result);
+}
+
+test "codePointSubstringByPositions - basic" {
+    const allocator = std.testing.allocator;
+    const input = [_]u16{ 'h', 'e', 'l', 'l', 'o' };
+    const result = try codePointSubstringByPositions(allocator, &input, 1, 4);
+    defer allocator.free(result);
+
+    const expected = [_]u16{ 'e', 'l', 'l' };
+    try std.testing.expectEqualSlices(u16, &expected, result);
+}
+
+test "codePointSubstringToEnd - basic" {
+    const allocator = std.testing.allocator;
+    const input = [_]u16{ 'h', 'e', 'l', 'l', 'o' };
+    const result = try codePointSubstringToEnd(allocator, &input, 2);
+    defer allocator.free(result);
+
+    const expected = [_]u16{ 'l', 'l', 'o' };
+    try std.testing.expectEqualSlices(u16, &expected, result);
+}
+
+test "isCodeUnitPrefix - valid prefix" {
+    const prefix = [_]u16{ 'h', 'e', 'l' };
+    const input = [_]u16{ 'h', 'e', 'l', 'l', 'o' };
+    try std.testing.expect(isCodeUnitPrefix(&prefix, &input));
+}
+
+test "isCodeUnitPrefix - not a prefix" {
+    const prefix = [_]u16{ 'w', 'o', 'r' };
+    const input = [_]u16{ 'h', 'e', 'l', 'l', 'o' };
+    try std.testing.expect(!isCodeUnitPrefix(&prefix, &input));
+}
+
+test "isCodeUnitSuffix - valid suffix" {
+    const suffix = [_]u16{ 'l', 'l', 'o' };
+    const input = [_]u16{ 'h', 'e', 'l', 'l', 'o' };
+    try std.testing.expect(isCodeUnitSuffix(&suffix, &input));
+}
+
+test "isCodeUnitSuffix - not a suffix" {
+    const suffix = [_]u16{ 'a', 'b', 'c' };
+    const input = [_]u16{ 'h', 'e', 'l', 'l', 'o' };
+    try std.testing.expect(!isCodeUnitSuffix(&suffix, &input));
+}
+
+test "codeUnitLessThan - less than" {
+    const a = [_]u16{ 'a', 'b', 'c' };
+    const b = [_]u16{ 'a', 'b', 'd' };
+    try std.testing.expect(codeUnitLessThan(&a, &b));
+}
+
+test "codeUnitLessThan - with prefix" {
+    const a = [_]u16{ 'h', 'e', 'l' };
+    const b = [_]u16{ 'h', 'e', 'l', 'l', 'o' };
+    try std.testing.expect(codeUnitLessThan(&a, &b));
+}
+
+test "codeUnitSubstring - basic" {
+    const input = [_]u16{ 'h', 'e', 'l', 'l', 'o' };
+    const result = codeUnitSubstring(&input, 1, 3);
+
+    const expected = [_]u16{ 'e', 'l', 'l' };
+    try std.testing.expectEqualSlices(u16, &expected, result);
+}
+
+test "codeUnitSubstringByPositions - basic" {
+    const input = [_]u16{ 'h', 'e', 'l', 'l', 'o' };
+    const result = codeUnitSubstringByPositions(&input, 1, 4);
+
+    const expected = [_]u16{ 'e', 'l', 'l' };
+    try std.testing.expectEqualSlices(u16, &expected, result);
+}
+
+test "codeUnitSubstringToEnd - basic" {
+    const input = [_]u16{ 'h', 'e', 'l', 'l', 'o' };
+    const result = codeUnitSubstringToEnd(&input, 2);
+
+    const expected = [_]u16{ 'l', 'l', 'o' };
+    try std.testing.expectEqualSlices(u16, &expected, result);
+}
+
+test "convertToScalarValueString - no surrogates" {
+    const allocator = std.testing.allocator;
+    const input = [_]u16{ 'h', 'e', 'l', 'l', 'o' };
+    const result = try convertToScalarValueString(allocator, &input);
+    defer allocator.free(result);
+
+    try std.testing.expectEqualSlices(u16, &input, result);
+}
+
+test "convertToScalarValueString - unpaired surrogate" {
+    const allocator = std.testing.allocator;
+    const input = [_]u16{ 'h', 0xD800, 'i' };
+    const result = try convertToScalarValueString(allocator, &input);
+    defer allocator.free(result);
+
+    const expected = [_]u16{ 'h', 0xFFFD, 'i' };
+    try std.testing.expectEqualSlices(u16, &expected, result);
+}
+
+test "convertToScalarValueString - valid surrogate pair" {
+    const allocator = std.testing.allocator;
+    const input = [_]u16{ 0xD83D, 0xDCA9, 'a' };
+    const result = try convertToScalarValueString(allocator, &input);
+    defer allocator.free(result);
+
+    try std.testing.expectEqualSlices(u16, &input, result);
+}
+
+test "stripAndCollapseAsciiWhitespace - multiple spaces" {
+    const allocator = std.testing.allocator;
+    const input = [_]u16{ 'h', 'e', ' ', ' ', ' ', 'l', 'l', 'o' };
+    const result = try stripAndCollapseAsciiWhitespace(allocator, &input);
+    defer allocator.free(result);
+
+    const expected = [_]u16{ 'h', 'e', ' ', 'l', 'l', 'o' };
+    try std.testing.expectEqualSlices(u16, &expected, result);
+}
+
+test "stripAndCollapseAsciiWhitespace - leading and trailing" {
+    const allocator = std.testing.allocator;
+    const input = [_]u16{ ' ', 'h', 'i', ' ' };
+    const result = try stripAndCollapseAsciiWhitespace(allocator, &input);
+    defer allocator.free(result);
+
+    const expected = [_]u16{ 'h', 'i' };
+    try std.testing.expectEqualSlices(u16, &expected, result);
+}
+
+test "asciiEncode - basic" {
+    const allocator = std.testing.allocator;
+    const input = [_]u16{ 'h', 'e', 'l', 'l', 'o' };
+    const result = try asciiEncode(allocator, &input);
+    defer allocator.free(result);
+
+    try std.testing.expectEqualStrings("hello", result);
+}
+
+test "asciiDecode - basic" {
+    const allocator = std.testing.allocator;
+    const input = "hello";
+    const result = try asciiDecode(allocator, input);
+    defer allocator.free(result);
+
+    const expected = [_]u16{ 'h', 'e', 'l', 'l', 'o' };
+    try std.testing.expectEqualSlices(u16, &expected, result);
 }

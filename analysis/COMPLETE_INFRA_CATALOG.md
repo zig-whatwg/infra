@@ -452,12 +452,19 @@ If statusInstance[0] is 404, then ...
 
 **Spec Context**: Conversion between JSON and JavaScript/Infra values
 
-### JavaScript Value Operations
+### JavaScript Value Operations (NOT IMPLEMENTED)
 
-1. **parse a JSON string to a JavaScript value** - Call `%JSON.parse%`
-2. **parse JSON bytes to a JavaScript value** - UTF-8 decode, then parse
-3. **serialize a JavaScript value to a JSON string** - Call `%JSON.stringify%` (no whitespace)
-4. **serialize a JavaScript value to JSON bytes** - Serialize, then UTF-8 encode
+> **Note**: These 4 functions are intentionally NOT implemented in this library.
+> See `src/json.zig` documentation for rationale and usage patterns with JS runtime libraries.
+
+1. **parse a JSON string to a JavaScript value** - Call `%JSON.parse%` (use JS runtime)
+2. **parse JSON bytes to a JavaScript value** - UTF-8 decode, then parse (use JS runtime)
+3. **serialize a JavaScript value to a JSON string** - Call `%JSON.stringify%` (use JS runtime)
+4. **serialize a JavaScript value to JSON bytes** - Serialize, then UTF-8 encode (use JS runtime)
+
+**Rationale**: Following browser architecture, JavaScript interop is handled by separate
+JS runtime libraries (e.g., zig-js-runtime). This maintains clean separation between
+Infra primitives (data structures) and JS bindings (runtime integration).
 
 ### Infra Value Operations
 

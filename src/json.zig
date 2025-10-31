@@ -3,6 +3,76 @@
 //! Spec: https://infra.spec.whatwg.org/#json
 //!
 //! Parse JSON strings into Infra values and serialize Infra values to JSON.
+//!
+//! # JavaScript Value Conversions (§6 lines 1068-1096)
+//!
+//! The WHATWG Infra spec defines 4 JavaScript interop functions:
+//! - parseJsonStringToJavaScriptValue
+//! - parseJsonBytesToJavaScriptValue
+//! - serializeJavaScriptValueToJsonString
+//! - serializeJavaScriptValueToJsonBytes
+//!
+//! These functions are NOT implemented in this library because:
+//!
+//! 1. **Separation of Concerns**: This library provides Infra primitives (data structures
+//!    and algorithms), not JavaScript engine bindings.
+//!
+//! 2. **Browser Architecture**: Chrome, Firefox, and Safari do not maintain separate
+//!    "Infra value" and "JavaScript value" type hierarchies. They use unified
+//!    representations (JSValue, JS::Value) to avoid marshaling overhead.
+//!
+//! 3. **Flexible JS Engine Support**: By not coupling to a specific JavaScript runtime,
+//!    this library remains portable across V8, JavaScriptCore, SpiderMonkey, and other
+//!    engines.
+//!
+//! 4. **Consumer Libraries Handle Binding**: Consumers (like zig-whatwg/dom) integrate
+//!    with their chosen JS runtime library (e.g., zig-js-runtime) to bridge Zig and
+//!    JavaScript.
+//!
+//! ## Example: Using with zig-js-runtime
+//!
+//! If you need JavaScript interop, use a JS runtime library like zig-js-runtime:
+//!
+//! ```zig
+//! const jsruntime = @import("jsruntime");
+//! const infra = @import("infra");
+//!
+//! // Parse JSON directly to JavaScript value using engine's native JSON.parse
+//! const js_value = try env.execJS(
+//!     \\JSON.parse(arguments[0])
+//!     , .{json_string}
+//! );
+//!
+//! // Serialize JavaScript value to JSON using engine's native JSON.stringify
+//! const json_result = try env.execJS(
+//!     \\JSON.stringify(arguments[0])
+//!     , .{js_value}
+//! );
+//!
+//! // Or use Infra values and let zig-js-runtime's reflection system handle conversion
+//! const infra_value = try infra.parseJsonString(allocator, json_string);
+//! // zig-js-runtime automatically converts Infra types to JS types
+//! ```
+//!
+//! See: https://github.com/lightpanda-io/zig-js-runtime
+//!
+//! ## Architectural Rationale
+//!
+//! The WHATWG Infra spec is a **conceptual model** for web platform specifications.
+//! Browser implementations optimize by merging Infra concepts directly into their JS
+//! engine's type system:
+//!
+//! - Infra "list" → JS Array (same runtime type)
+//! - Infra "ordered map" → JS Object (same runtime type)
+//! - Infra "string" → JS String (same runtime type)
+//!
+//! This Zig implementation follows the same pattern: Infra primitives (std.ArrayList,
+//! OrderedMap, []const u16) are the foundation, and JS runtime libraries provide the
+//! binding layer when JavaScript interop is needed.
+//!
+//! Other WHATWG spec implementations (URL, DOM, Fetch) that reference "parse JSON to
+//! JavaScript value" in their algorithms should use their JS runtime directly rather
+//! than expecting this library to provide the abstraction.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -54,6 +124,10 @@ pub fn parseJsonString(allocator: Allocator, json_string: []const u8) !InfraValu
     defer parsed.deinit();
 
     return try jsonValueToInfra(allocator, parsed.value);
+}
+
+pub fn parseJsonBytes(allocator: Allocator, bytes: []const u8) !InfraValue {
+    return parseJsonString(allocator, bytes);
 }
 
 fn jsonValueToInfra(allocator: Allocator, value: std.json.Value) !InfraValue {
@@ -130,6 +204,10 @@ pub fn serializeInfraValue(allocator: Allocator, value: InfraValue) ![]const u8 
     try serializeValue(allocator, &result, value);
 
     return result.toOwnedSlice(allocator);
+}
+
+pub fn serializeInfraValueToBytes(allocator: Allocator, value: InfraValue) ![]const u8 {
+    return serializeInfraValue(allocator, value);
 }
 
 fn serializeValue(allocator: Allocator, writer: *std.ArrayList(u8), value: InfraValue) !void {
@@ -357,4 +435,22 @@ test "serializeJson - object empty" {
     defer allocator.free(result);
 
     try std.testing.expectEqualStrings("{}", result);
+}
+
+test "parseJsonBytes - basic" {
+    const allocator = std.testing.allocator;
+    const bytes = "{\"key\":\"value\"}";
+    var result = try parseJsonBytes(allocator, bytes);
+    defer result.deinit(allocator);
+
+    try std.testing.expect(result == .map);
+}
+
+test "serializeInfraValueToBytes - basic" {
+    const allocator = std.testing.allocator;
+    const value = InfraValue{ .number = 42.0 };
+    const result = try serializeInfraValueToBytes(allocator, value);
+    defer allocator.free(result);
+
+    try std.testing.expectEqualStrings("42", result);
 }

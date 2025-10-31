@@ -1,6 +1,7 @@
 //! WHATWG Infra List Operations
 //!
 //! Spec: https://infra.spec.whatwg.org/#list
+//! WHATWG Infra Standard §5.1 lines 828-908
 //!
 //! A list is an ordered sequence of items. This implementation uses
 //! 4-element inline storage (stack-allocated) before spilling to heap,
@@ -30,11 +31,14 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 pub fn List(comptime T: type) type {
+    return ListWithCapacity(T, 4);
+}
+
+pub fn ListWithCapacity(comptime T: type, comptime inline_capacity: usize) type {
     return struct {
         const Self = @This();
-        const inline_capacity = 4;
 
-        inline_storage: [inline_capacity]T = undefined,
+        inline_storage: if (inline_capacity > 0) [inline_capacity]T else void = if (inline_capacity > 0) undefined else {},
         heap_storage: ?std.ArrayList(T) = null,
         len: usize = 0,
         allocator: Allocator,
@@ -52,14 +56,49 @@ pub fn List(comptime T: type) type {
         }
 
         pub fn append(self: *Self, item: T) !void {
-            if (self.len < inline_capacity) {
-                self.inline_storage[self.len] = item;
-                self.len += 1;
-            } else {
-                try self.ensureHeap();
-                try self.heap_storage.?.append(self.allocator, item);
-                self.len += 1;
+            if (comptime inline_capacity > 0) {
+                if (self.len < inline_capacity) {
+                    self.inline_storage[self.len] = item;
+                    self.len += 1;
+                    return;
+                }
             }
+            try self.ensureHeap();
+            try self.heap_storage.?.append(self.allocator, item);
+            self.len += 1;
+        }
+
+        /// Append multiple items at once (batch operation).
+        /// More efficient than calling append() in a loop.
+        pub fn appendSlice(self: *Self, slice: []const T) !void {
+            if (comptime inline_capacity > 0) {
+                if (self.len + slice.len <= inline_capacity) {
+                    // Fast path: all fit in inline storage
+                    @memcpy(
+                        self.inline_storage[self.len..][0..slice.len],
+                        slice,
+                    );
+                    self.len += slice.len;
+                    return;
+                } else if (self.len < inline_capacity) {
+                    // Mixed: some in inline, rest in heap
+                    const inline_space = inline_capacity - self.len;
+                    @memcpy(
+                        self.inline_storage[self.len..][0..inline_space],
+                        slice[0..inline_space],
+                    );
+                    self.len = inline_capacity;
+
+                    try self.ensureHeap();
+                    try self.heap_storage.?.appendSlice(self.allocator, slice[inline_space..]);
+                    self.len += slice.len - inline_space;
+                    return;
+                }
+            }
+            // All in heap
+            try self.ensureHeap();
+            try self.heap_storage.?.appendSlice(self.allocator, slice);
+            self.len += slice.len;
         }
 
         pub fn prepend(self: *Self, item: T) !void {
@@ -71,18 +110,20 @@ pub fn List(comptime T: type) type {
                 return error.IndexOutOfBounds;
             }
 
-            if (self.len < inline_capacity) {
-                var i = self.len;
-                while (i > index) : (i -= 1) {
-                    self.inline_storage[i] = self.inline_storage[i - 1];
+            if (comptime inline_capacity > 0) {
+                if (self.len < inline_capacity) {
+                    var i = self.len;
+                    while (i > index) : (i -= 1) {
+                        self.inline_storage[i] = self.inline_storage[i - 1];
+                    }
+                    self.inline_storage[index] = item;
+                    self.len += 1;
+                    return;
                 }
-                self.inline_storage[index] = item;
-                self.len += 1;
-            } else {
-                try self.ensureHeap();
-                try self.heap_storage.?.insert(self.allocator, index, item);
-                self.len += 1;
             }
+            try self.ensureHeap();
+            try self.heap_storage.?.insert(self.allocator, index, item);
+            self.len += 1;
         }
 
         pub fn remove(self: *Self, index: usize) !T {
@@ -154,12 +195,18 @@ pub fn List(comptime T: type) type {
             return self.len == 0;
         }
 
+        /// Clear all items from the list.
+        /// WHATWG Infra Standard §5.1 line 882: "To **empty** a list is to remove all of its items."
         pub fn clear(self: *Self) void {
             if (self.heap_storage) |*heap| {
                 heap.clearRetainingCapacity();
             }
             self.len = 0;
         }
+
+        /// Alias for clear(). Remove all items from the list.
+        /// WHATWG Infra Standard §5.1 line 882: "To **empty** a list is to remove all of its items."
+        pub const empty = clear;
 
         pub fn clone(self: *const Self) !Self {
             var new_list = Self.init(self.allocator);
@@ -202,6 +249,66 @@ pub fn List(comptime T: type) type {
                         return lessThan(a, b);
                     }
                 }.inner);
+            }
+        }
+
+        pub fn sortDescending(self: *Self, comptime lessThan: fn (T, T) bool) void {
+            if (self.heap_storage) |*heap| {
+                std.mem.sort(T, heap.items, {}, struct {
+                    fn inner(_: void, a: T, b: T) bool {
+                        return lessThan(b, a);
+                    }
+                }.inner);
+            } else {
+                std.mem.sort(T, self.inline_storage[0..self.len], {}, struct {
+                    fn inner(_: void, a: T, b: T) bool {
+                        return lessThan(b, a);
+                    }
+                }.inner);
+            }
+        }
+
+        pub fn getIndices(self: *const Self, allocator: Allocator) ![]const usize {
+            const indices = try allocator.alloc(usize, self.len);
+            for (0..self.len) |i| {
+                indices[i] = i;
+            }
+            return indices;
+        }
+
+        /// Replace all items matching a condition with a given item.
+        /// WHATWG Infra Standard §5.1 line 870: "To **replace** within a list that is not
+        /// an ordered set is to replace all items from the list that match a given condition
+        /// with the given item, or do nothing if none do."
+        pub fn replaceMatching(self: *Self, condition: fn (T) bool, item: T) void {
+            if (self.heap_storage) |*heap| {
+                for (heap.items, 0..) |elem, i| {
+                    if (condition(elem)) {
+                        heap.items[i] = item;
+                    }
+                }
+            } else {
+                for (self.inline_storage[0..self.len], 0..) |elem, i| {
+                    if (condition(elem)) {
+                        self.inline_storage[i] = item;
+                    }
+                }
+            }
+        }
+
+        /// Remove all items matching a condition from the list.
+        /// WHATWG Infra Standard §5.1 line 876: "To **remove** zero or more items from
+        /// a list is to remove all items from the list that match a given condition,
+        /// or do nothing if none do."
+        pub fn removeMatching(self: *Self, condition: fn (T) bool) void {
+            var i: usize = 0;
+            while (i < self.len) {
+                const elem = if (self.heap_storage) |heap| heap.items[i] else self.inline_storage[i];
+                if (condition(elem)) {
+                    _ = self.remove(i) catch unreachable;
+                } else {
+                    i += 1;
+                }
             }
         }
 
@@ -425,6 +532,19 @@ test "List - clear" {
     try std.testing.expectEqual(@as(usize, 0), list.size());
 }
 
+test "List - empty alias" {
+    const allocator = std.testing.allocator;
+    var list = List(u32).init(allocator);
+    defer list.deinit();
+
+    try list.append(1);
+    try list.append(2);
+    list.empty();
+
+    try std.testing.expect(list.isEmpty());
+    try std.testing.expectEqual(@as(usize, 0), list.size());
+}
+
 test "List - clone" {
     const allocator = std.testing.allocator;
     var list = List(u32).init(allocator);
@@ -504,4 +624,89 @@ test "List - no memory leaks with heap storage" {
     }
 
     try std.testing.expectEqual(@as(usize, 10), list.size());
+}
+
+test "List - sortDescending" {
+    const allocator = std.testing.allocator;
+    var list = List(u32).init(allocator);
+    defer list.deinit();
+
+    try list.append(3);
+    try list.append(1);
+    try list.append(4);
+    try list.append(2);
+
+    list.sortDescending(struct {
+        fn lessThan(a: u32, b: u32) bool {
+            return a < b;
+        }
+    }.lessThan);
+
+    try std.testing.expectEqual(@as(u32, 4), list.get(0).?);
+    try std.testing.expectEqual(@as(u32, 3), list.get(1).?);
+    try std.testing.expectEqual(@as(u32, 2), list.get(2).?);
+    try std.testing.expectEqual(@as(u32, 1), list.get(3).?);
+}
+
+test "List - replaceMatching" {
+    const allocator = std.testing.allocator;
+    var list = List(u32).init(allocator);
+    defer list.deinit();
+
+    try list.append(1);
+    try list.append(2);
+    try list.append(3);
+    try list.append(2);
+
+    list.replaceMatching(struct {
+        fn isTwo(x: u32) bool {
+            return x == 2;
+        }
+    }.isTwo, 99);
+
+    try std.testing.expectEqual(@as(u32, 1), list.get(0).?);
+    try std.testing.expectEqual(@as(u32, 99), list.get(1).?);
+    try std.testing.expectEqual(@as(u32, 3), list.get(2).?);
+    try std.testing.expectEqual(@as(u32, 99), list.get(3).?);
+}
+
+test "List - removeMatching" {
+    const allocator = std.testing.allocator;
+    var list = List(u32).init(allocator);
+    defer list.deinit();
+
+    try list.append(1);
+    try list.append(2);
+    try list.append(3);
+    try list.append(2);
+    try list.append(4);
+
+    list.removeMatching(struct {
+        fn isTwo(x: u32) bool {
+            return x == 2;
+        }
+    }.isTwo);
+
+    try std.testing.expectEqual(@as(usize, 3), list.size());
+    try std.testing.expectEqual(@as(u32, 1), list.get(0).?);
+    try std.testing.expectEqual(@as(u32, 3), list.get(1).?);
+    try std.testing.expectEqual(@as(u32, 4), list.get(2).?);
+}
+
+test "List - getIndices" {
+    const allocator = std.testing.allocator;
+    var list = List(u32).init(allocator);
+    defer list.deinit();
+
+    try list.append(10);
+    try list.append(20);
+    try list.append(30);
+
+    const indices = try list.getIndices(allocator);
+    defer allocator.free(indices);
+
+    try std.testing.expectEqual(@as(usize, 3), indices.len);
+    try std.testing.expectEqual(@as(usize, 0), indices[0]);
+    try std.testing.expectEqual(@as(usize, 1), indices[1]);
+    try std.testing.expectEqual(@as(usize, 2), indices[2]);
 }

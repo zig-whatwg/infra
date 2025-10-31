@@ -1,6 +1,7 @@
 //! WHATWG Infra Ordered Map Operations
 //!
 //! Spec: https://infra.spec.whatwg.org/#ordered-map
+//! WHATWG Infra Standard §5.2 lines 980-1033
 //!
 //! An ordered map is an ordered list of tuples (key-value pairs). It preserves
 //! insertion order, which is required by the spec. This implementation uses a
@@ -36,6 +37,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const List = @import("list.zig").List;
+const OrderedSetType = @import("set.zig").OrderedSet;
 
 pub fn OrderedMap(comptime K: type, comptime V: type) type {
     return struct {
@@ -66,6 +68,21 @@ pub fn OrderedMap(comptime K: type, comptime V: type) type {
                 }
             }
             return null;
+        }
+
+        /// Get the value of an entry with a default value if key doesn't exist.
+        /// WHATWG Infra Standard §5.2 lines 992-999
+        ///
+        /// To **get the value of an entry** in an ordered map `map` given a key `key`
+        /// and an optional `default`:
+        /// 1. If `map` does not contain `key` and `default` is given, then return `default`.
+        /// 2. Assert: `map` contains `key`.
+        /// 3. Return the value of the entry in `map` whose key is `key`.
+        ///
+        /// This implements the "with default" phrase from the spec, allowing:
+        /// `map.getWithDefault(key, default_value)`
+        pub fn getWithDefault(self: *const Self, key: K, default: V) V {
+            return self.get(key) orelse default;
         }
 
         pub fn set(self: *Self, key: K, value: V) !void {
@@ -131,6 +148,40 @@ pub fn OrderedMap(comptime K: type, comptime V: type) type {
             return Iterator{
                 .items_slice = self.entries.items(),
             };
+        }
+
+        pub fn getKeys(self: *const Self) !OrderedSetType(K) {
+            var keys = OrderedSetType(K).init(self.entries.allocator);
+            const items_slice = self.entries.items();
+            for (items_slice) |entry| {
+                _ = try keys.add(entry.key);
+            }
+            return keys;
+        }
+
+        pub fn getValues(self: *const Self) !List(V) {
+            var values = List(V).init(self.entries.allocator);
+            const items_slice = self.entries.items();
+            for (items_slice) |entry| {
+                try values.append(entry.value);
+            }
+            return values;
+        }
+
+        pub fn sortAscending(self: *const Self, lessThan: fn (Entry, Entry) bool) !Self {
+            var sorted = try self.clone();
+            sorted.entries.sort(lessThan);
+            return sorted;
+        }
+
+        pub fn sortDescending(self: *const Self, lessThan: fn (Entry, Entry) bool) !Self {
+            var sorted = try self.clone();
+            sorted.entries.sort(struct {
+                fn inner(a: Entry, b: Entry) bool {
+                    return lessThan(b, a);
+                }
+            }.inner);
+            return sorted;
         }
     };
 }
@@ -332,4 +383,125 @@ test "OrderedMap - no memory leaks" {
     }
 
     try std.testing.expectEqual(@as(usize, 10), map.size());
+}
+
+test "OrderedMap - getKeys" {
+    const allocator = std.testing.allocator;
+    var map = OrderedMap(u32, u32).init(allocator);
+    defer map.deinit();
+
+    try map.set(3, 300);
+    try map.set(1, 100);
+    try map.set(2, 200);
+
+    var keys = try map.getKeys();
+    defer keys.deinit();
+
+    try std.testing.expectEqual(@as(usize, 3), keys.size());
+    try std.testing.expect(keys.contains(1));
+    try std.testing.expect(keys.contains(2));
+    try std.testing.expect(keys.contains(3));
+}
+
+test "OrderedMap - getValues" {
+    const allocator = std.testing.allocator;
+    var map = OrderedMap(u32, u32).init(allocator);
+    defer map.deinit();
+
+    try map.set(3, 300);
+    try map.set(1, 100);
+    try map.set(2, 200);
+
+    var values = try map.getValues();
+    defer values.deinit();
+
+    try std.testing.expectEqual(@as(usize, 3), values.size());
+    try std.testing.expectEqual(@as(u32, 300), values.get(0).?);
+    try std.testing.expectEqual(@as(u32, 100), values.get(1).?);
+    try std.testing.expectEqual(@as(u32, 200), values.get(2).?);
+}
+
+test "OrderedMap - sortAscending" {
+    const allocator = std.testing.allocator;
+    var map = OrderedMap(u32, u32).init(allocator);
+    defer map.deinit();
+
+    try map.set(3, 300);
+    try map.set(1, 100);
+    try map.set(2, 200);
+
+    var sorted = try map.sortAscending(struct {
+        fn lessThan(a: OrderedMap(u32, u32).Entry, b: OrderedMap(u32, u32).Entry) bool {
+            return a.key < b.key;
+        }
+    }.lessThan);
+    defer sorted.deinit();
+
+    var it = sorted.iterator();
+    const e1 = it.next().?;
+    const e2 = it.next().?;
+    const e3 = it.next().?;
+
+    try std.testing.expectEqual(@as(u32, 1), e1.key);
+    try std.testing.expectEqual(@as(u32, 2), e2.key);
+    try std.testing.expectEqual(@as(u32, 3), e3.key);
+}
+
+test "OrderedMap - sortDescending" {
+    const allocator = std.testing.allocator;
+    var map = OrderedMap(u32, u32).init(allocator);
+    defer map.deinit();
+
+    try map.set(3, 300);
+    try map.set(1, 100);
+    try map.set(2, 200);
+
+    var sorted = try map.sortDescending(struct {
+        fn lessThan(a: OrderedMap(u32, u32).Entry, b: OrderedMap(u32, u32).Entry) bool {
+            return a.key < b.key;
+        }
+    }.lessThan);
+    defer sorted.deinit();
+
+    var it = sorted.iterator();
+    const e1 = it.next().?;
+    const e2 = it.next().?;
+    const e3 = it.next().?;
+
+    try std.testing.expectEqual(@as(u32, 3), e1.key);
+    try std.testing.expectEqual(@as(u32, 2), e2.key);
+    try std.testing.expectEqual(@as(u32, 1), e3.key);
+}
+
+test "OrderedMap - getWithDefault existing key" {
+    const allocator = std.testing.allocator;
+    var map = OrderedMap(u32, u32).init(allocator);
+    defer map.deinit();
+
+    try map.set(1, 100);
+    try map.set(2, 200);
+
+    const value = map.getWithDefault(1, 999);
+    try std.testing.expectEqual(@as(u32, 100), value);
+}
+
+test "OrderedMap - getWithDefault missing key" {
+    const allocator = std.testing.allocator;
+    var map = OrderedMap(u32, u32).init(allocator);
+    defer map.deinit();
+
+    try map.set(1, 100);
+    try map.set(2, 200);
+
+    const value = map.getWithDefault(3, 999);
+    try std.testing.expectEqual(@as(u32, 999), value);
+}
+
+test "OrderedMap - getWithDefault empty map" {
+    const allocator = std.testing.allocator;
+    var map = OrderedMap(u32, u32).init(allocator);
+    defer map.deinit();
+
+    const value = map.getWithDefault(1, 42);
+    try std.testing.expectEqual(@as(u32, 42), value);
 }

@@ -1,0 +1,119 @@
+
+=== List Benchmarks ===
+
+append (inline storage, 3 items): 7.11 ms total, 0.00 ns/op
+append (heap storage, 10 items): 7855.18 ms total, 0.01 ns/op
+prepend (3 items): 5.30 ms total, 0.00 ns/op
+insert (middle): 5.46 ms total, 0.00 ns/op
+remove (middle): 5.03 ms total, 0.00 ns/op
+get (index access): 0.00 ms total, 0.00 ns/op
+contains (linear search): 0.03 ms total, 0.00 ns/op
+clone (10 items): 80.31 ms total, 0.00 ns/op
+sort (5 items): 54.87 ms total, 0.00 ns/op
+
+
+=== JSON Benchmarks ===
+
+parse null: 56.57 ms total, 0.01 ns/op
+parse boolean: 57.32 ms total, 0.01 ns/op
+parse number: 81.86 ms total, 0.01 ns/op
+parse string: 80.07 ms total, 0.01 ns/op
+parse array (small, 3 items): 154.44 ms total, 0.02 ns/op
+parse array (large, 20 items): 18.88 ms total, 0.00 ns/op
+parse object (small, 2 keys): 182.30 ms total, 0.02 ns/op
+parse object (large, nested): 25.65 ms total, 0.00 ns/op
+serialize null: 81.76 ms total, 0.01 ns/op
+serialize boolean: 78.99 ms total, 0.01 ns/op
+serialize number: 80.44 ms total, 0.01 ns/op
+serialize string: 104.92 ms total, 0.01 ns/op
+
+
+=== Memory Leak Benchmark ===
+
+Duration: 120 seconds of intensive workload
+Warmup: 5 seconds
+
+This benchmark tests long-term memory stability by creating and
+destroying Infra types repeatedly. Memory should return to baseline
+after the workload completes, verified by GPA leak detection.
+
+Phase 1: Warmup (5 seconds)
+Completed 13105 warmup iterations
+
+Phase 2: Intensive Workload (120 seconds)
+Running continuous create/destroy cycles...
+
+[+10s] Completed    25621 iterations
+[+20s] Completed    49645 iterations
+[+30s] Completed    73990 iterations
+[+40s] Completed    99159 iterations
+[+50s] Completed   124979 iterations
+[+60s] Completed   150434 iterations
+[+70s] Completed   175383 iterations
+[+80s] Completed   198685 iterations
+[+90s] Completed   223718 iterations
+[+100s] Completed   248703 iterations
+[+110s] Completed   269979 iterations
+[+120s] Completed   292157 iterations
+
+=== Results ===
+
+Total iterations: 292157
+Actual duration: 120.00 seconds
+Iterations per second: 2434.64
+
+Each iteration performed:
+  - List: 100 appends, removes, 50 prepends, clone, sort
+  - OrderedMap: 50 sets, 25 removes, clone (with string keys)
+  - OrderedSet: 100 adds, 50 removes, clone
+  - Stack: 100 pushes, 100 pops
+  - Queue: 100 enqueues, 100 dequeues
+  - String: UTF-8↔UTF-16, case transforms, splitting
+  - JSON: Parse/serialize nested structures
+  - Base64: Encode/decode with forgiving whitespace
+
+Memory leak check will be performed on exit...
+
+✅ SUCCESS: No memory leaks detected by GPA!
+
+=== String Benchmarks ===
+
+utf8ToUtf16 (ASCII): 730.14 ms total, 0.01 ns/op
+utf8ToUtf16 (Unicode): 636.05 ms total, 0.01 ns/op
+utf16ToUtf8 (ASCII): 643.29 ms total, 0.01 ns/op
+utf16ToUtf8 (Unicode): 1086.49 ms total, 0.01 ns/op
+asciiLowercase: 563.53 ms total, 0.01 ns/op
+asciiUppercase: 589.11 ms total, 0.01 ns/op
+isAsciiCaseInsensitiveMatch: 0.00 ms total, 0.00 ns/op
+stripWhitespace: 577.42 ms total, 0.01 ns/op
+stripNewlines: 557.01 ms total, 0.01 ns/op
+normalizeNewlines: 553.34 ms total, 0.01 ns/op
+splitOnWhitespace: 170.20 ms total, 0.00 ns/op
+splitOnCommas: 143.57 ms total, 0.00 ns/op
+concatenate: 546.03 ms total, 0.01 ns/op
+
+
+=== OrderedMap Benchmarks ===
+
+set (small, 3 entries): 4.30 ms total, 0.00 ns/op
+set (large, 20 entries): 795.43 ms total, 0.00 ns/op
+get (10 entries): 0.02 ms total, 0.00 ns/op
+contains (10 entries): 0.01 ms total, 0.00 ns/op
+remove (3 entries): 9.49 ms total, 0.00 ns/op
+iteration (10 entries): 0.01 ms total, 0.00 ns/op
+clone (10 entries): 78.86 ms total, 0.00 ns/op
+string keys (4 entries): 0.59 ms total, 0.00 ns/op
+
+
+=== Base64 Benchmarks ===
+
+encode (small, 5 bytes): 517.70 ms total, 0.01 ns/op
+encode (medium, 32 bytes): 539.50 ms total, 0.01 ns/op
+encode (large, 256 bytes): 56.51 ms total, 0.00 ns/op
+decode (small, 5 bytes): 568.09 ms total, 0.01 ns/op
+decode (medium, 32 bytes): 984.29 ms total, 0.01 ns/op
+decode (large, 256 bytes): 101.94 ms total, 0.00 ns/op
+decode (with whitespace): 608.58 ms total, 0.01 ns/op
+roundtrip (small, 5 bytes): 328.84 ms total, 0.00 ns/op
+roundtrip (large, 256 bytes): 48.30 ms total, 0.00 ns/op
+

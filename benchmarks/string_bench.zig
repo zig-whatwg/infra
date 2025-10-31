@@ -188,7 +188,7 @@ fn benchConcatenate() !void {
 
     var i: usize = 0;
     while (i < ITERATIONS) : (i += 1) {
-        const result = try string.concatenate(allocator, &strings);
+        const result = try string.concatenate(allocator, &strings, null);
         defer allocator.free(result);
     }
 }
