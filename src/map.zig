@@ -50,6 +50,17 @@ pub fn OrderedMap(comptime K: type, comptime V: type) type {
 
         entries: List(Entry),
 
+        /// Comptime-optimized key equality check.
+        /// For integers and simple types, use direct ==.
+        /// For complex types, fall back to std.meta.eql.
+        inline fn keyEql(a: K, b: K) bool {
+            const type_info = @typeInfo(K);
+            return switch (type_info) {
+                .int, .float, .bool, .@"enum" => a == b,
+                else => std.meta.eql(a, b),
+            };
+        }
+
         pub fn init(allocator: Allocator) Self {
             return Self{
                 .entries = List(Entry).init(allocator),
@@ -63,7 +74,7 @@ pub fn OrderedMap(comptime K: type, comptime V: type) type {
         pub fn get(self: *const Self, key: K) ?V {
             const items_slice = self.entries.items();
             for (items_slice) |entry| {
-                if (std.meta.eql(entry.key, key)) {
+                if (keyEql(entry.key, key)) {
                     return entry.value;
                 }
             }
@@ -88,7 +99,7 @@ pub fn OrderedMap(comptime K: type, comptime V: type) type {
         pub fn set(self: *Self, key: K, value: V) !void {
             const items_slice = self.entries.items();
             for (items_slice, 0..) |entry, i| {
-                if (std.meta.eql(entry.key, key)) {
+                if (keyEql(entry.key, key)) {
                     _ = try self.entries.replace(i, Entry{ .key = key, .value = value });
                     return;
                 }
@@ -99,7 +110,7 @@ pub fn OrderedMap(comptime K: type, comptime V: type) type {
         pub fn remove(self: *Self, key: K) bool {
             const items_slice = self.entries.items();
             for (items_slice, 0..) |entry, i| {
-                if (std.meta.eql(entry.key, key)) {
+                if (keyEql(entry.key, key)) {
                     _ = self.entries.remove(i) catch unreachable;
                     return true;
                 }

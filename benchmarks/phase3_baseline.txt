@@ -1,0 +1,17 @@
+
+=== Phase 3: Advanced Optimizations Benchmarks ===
+
+OrderedMap set (5 items):     +5588ms total, 5588.00 ns/op
+OrderedMap set (12 items):     +825ms total, 8250.00 ns/op
+OrderedMap set (100 items):    +156ms total, 15600.00 ns/op
+OrderedMap get (5 items):       +10ms total,   1.00 ns/op
+OrderedMap get (12 items):      +22ms total,   2.20 ns/op
+OrderedMap get (100 items):     +15ms total,  15.00 ns/op
+OrderedMap contains (5):        +10ms total,   1.00 ns/op
+OrderedMap contains (12):       +21ms total,   2.10 ns/op
+OrderedMap contains (100):      +22ms total,  22.00 ns/op
+concat (2 strings):           +5666ms total, 5666.00 ns/op
+concat (5 strings):            +567ms total, 5670.00 ns/op
+concat (5 strings, sep):       +552ms total, 5520.00 ns/op
+
+=== Phase 3 Benchmarks Complete ===

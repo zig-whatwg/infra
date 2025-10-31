@@ -1,0 +1,18 @@
+
+=== Phase 2: String Operations Benchmarks ===
+
+indexOf (char, short 12 chars):     +15ms total,   1.50 ns/op
+indexOf (char, long 256 chars):     +74ms total,  74.00 ns/op
+indexOf (char, not found):          +74ms total,  74.00 ns/op
+eql (short 12 chars, equal):        +40ms total,   4.00 ns/op
+eql (long 256 chars, equal):       +793ms total,  79.30 ns/op
+eql (long 256 chars, not equal):   +798ms total,  79.80 ns/op
+contains (short, found):             +5ms total,   5.00 ns/op
+contains (long, found):             +11ms total, 110.00 ns/op
+contains (long, not found):         +13ms total, 130.00 ns/op
+isAsciiString (short 12 chars):     +38ms total,   3.80 ns/op
+isAsciiString (long 256 chars):     +76ms total,  76.00 ns/op
+asciiLowercase (48 chars):        +5335ms total, 5335.00 ns/op
+asciiUppercase (48 chars):        +5451ms total, 5451.00 ns/op
+
+=== Phase 2 Benchmarks Complete ===

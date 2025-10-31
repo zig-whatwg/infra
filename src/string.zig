@@ -242,8 +242,38 @@ pub inline fn isScalarValueString(string: String) bool {
 pub fn is(a: String, b: String) bool {
     if (a.len != b.len) return false;
 
+    // Use SIMD for long strings (>=16 code units)
+    if (a.len >= 16) {
+        return isSimd(a, b);
+    }
+
+    // Scalar path for short strings
     for (a, b) |code_unit_a, code_unit_b| {
         if (code_unit_a != code_unit_b) return false;
+    }
+
+    return true;
+}
+
+fn isSimd(a: String, b: String) bool {
+    const VecSize = 8; // Process 8 u16 values at a time (16 bytes)
+    const Vec = @Vector(VecSize, u16);
+
+    var i: usize = 0;
+
+    // SIMD loop - process 8 u16 at a time
+    while (i + VecSize <= a.len) : (i += VecSize) {
+        const chunk_a: Vec = a[i..][0..VecSize].*;
+        const chunk_b: Vec = b[i..][0..VecSize].*;
+
+        // Check if all elements are equal
+        const matches = chunk_a == chunk_b;
+        if (!@reduce(.And, matches)) return false;
+    }
+
+    // Scalar tail for remaining elements
+    while (i < a.len) : (i += 1) {
+        if (a[i] != b[i]) return false;
     }
 
     return true;
@@ -256,12 +286,82 @@ pub const isIdenticalTo = is;
 /// Alias for is() - common name for string equality
 pub const eql = is;
 
+/// Check if a haystack contains a needle substring.
+/// Returns true if needle is found in haystack, false otherwise.
+pub fn contains(haystack: String, needle: String) bool {
+    if (needle.len == 0) return true;
+    if (haystack.len < needle.len) return false;
+
+    // Single character optimization
+    if (needle.len == 1) {
+        return indexOf(haystack, needle[0]) != null;
+    }
+
+    // For substring search, use a simple but efficient algorithm
+    const max_start = haystack.len - needle.len;
+    var start: usize = 0;
+
+    while (start <= max_start) : (start += 1) {
+        // Check first character quickly
+        if (haystack[start] != needle[0]) continue;
+
+        // Check rest of substring
+        var matches = true;
+        var j: usize = 1;
+        while (j < needle.len) : (j += 1) {
+            if (haystack[start + j] != needle[j]) {
+                matches = false;
+                break;
+            }
+        }
+        if (matches) return true;
+    }
+
+    return false;
+}
+
 /// Find the first occurrence of a code unit in a string.
 /// Returns the index if found, null otherwise.
 pub fn indexOf(haystack: String, needle: u16) ?usize {
+    // Use SIMD for long strings (>=16 code units)
+    if (haystack.len >= 16) {
+        return indexOfSimd(haystack, needle);
+    }
+
+    // Scalar path for short strings
     for (haystack, 0..) |code_unit, i| {
         if (code_unit == needle) return i;
     }
+    return null;
+}
+
+fn indexOfSimd(haystack: String, needle: u16) ?usize {
+    const VecSize = 8; // Process 8 u16 values at a time (16 bytes)
+    const Vec = @Vector(VecSize, u16);
+    const needle_vec: Vec = @splat(needle);
+
+    var i: usize = 0;
+
+    // SIMD loop - process 8 u16 at a time
+    while (i + VecSize <= haystack.len) : (i += VecSize) {
+        const chunk: Vec = haystack[i..][0..VecSize].*;
+        const matches = chunk == needle_vec;
+
+        // Check if any element matched
+        if (@reduce(.Or, matches)) {
+            // Find which element matched
+            var j: usize = 0;
+            while (j < VecSize) : (j += 1) {
+                if (matches[j]) return i + j;
+            }
+        }
+    }
+
+    // Scalar tail for remaining elements
+    while (i < haystack.len) : (i += 1) {
+        if (haystack[i] == needle) return i;
+    }
+
     return null;
 }
 
@@ -1566,4 +1666,52 @@ test "asciiDecode - basic" {
 
     const expected = [_]u16{ 'h', 'e', 'l', 'l', 'o' };
     try std.testing.expectEqualSlices(u16, &expected, result);
+}
+
+test "contains - empty needle" {
+    const haystack = [_]u16{ 'h', 'e', 'l', 'l', 'o' };
+    const needle = [_]u16{};
+    try std.testing.expect(contains(&haystack, &needle));
+}
+
+test "contains - single char found" {
+    const haystack = [_]u16{ 'h', 'e', 'l', 'l', 'o' };
+    const needle = [_]u16{'l'};
+    try std.testing.expect(contains(&haystack, &needle));
+}
+
+test "contains - single char not found" {
+    const haystack = [_]u16{ 'h', 'e', 'l', 'l', 'o' };
+    const needle = [_]u16{'x'};
+    try std.testing.expect(!contains(&haystack, &needle));
+}
+
+test "contains - substring found" {
+    const haystack = [_]u16{ 'h', 'e', 'l', 'l', 'o' };
+    const needle = [_]u16{ 'e', 'l', 'l' };
+    try std.testing.expect(contains(&haystack, &needle));
+}
+
+test "contains - substring not found" {
+    const haystack = [_]u16{ 'h', 'e', 'l', 'l', 'o' };
+    const needle = [_]u16{ 'w', 'o', 'r' };
+    try std.testing.expect(!contains(&haystack, &needle));
+}
+
+test "contains - substring at start" {
+    const haystack = [_]u16{ 'h', 'e', 'l', 'l', 'o' };
+    const needle = [_]u16{ 'h', 'e' };
+    try std.testing.expect(contains(&haystack, &needle));
+}
+
+test "contains - substring at end" {
+    const haystack = [_]u16{ 'h', 'e', 'l', 'l', 'o' };
+    const needle = [_]u16{ 'l', 'o' };
+    try std.testing.expect(contains(&haystack, &needle));
+}
+
+test "contains - needle longer than haystack" {
+    const haystack = [_]u16{ 'h', 'i' };
+    const needle = [_]u16{ 'h', 'e', 'l', 'l', 'o' };
+    try std.testing.expect(!contains(&haystack, &needle));
 }

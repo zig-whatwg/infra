@@ -164,6 +164,9 @@ pub fn build(b: *std.Build) void {
         .{ .name = "bench-base64", .file = "benchmarks/base64_bench.zig" },
         .{ .name = "bench-memory-leak", .file = "benchmarks/memory_leak_bench.zig" },
         .{ .name = "bench-phase1", .file = "benchmarks/phase1_bench.zig" },
+        .{ .name = "bench-phase2", .file = "benchmarks/phase2_bench.zig" },
+        .{ .name = "bench-phase3", .file = "benchmarks/phase3_bench.zig" },
+        .{ .name = "bench-memory-stress", .file = "benchmarks/memory_stress_bench.zig" },
     };
 
     for (benchmarks) |bench_info| {
